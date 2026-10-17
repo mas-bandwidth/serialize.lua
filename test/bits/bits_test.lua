@@ -78,6 +78,49 @@ local function limbsToInt(limbs)
 end
 
 --------------------------------------------------------------------------------
+-- UINT128 AND BYTES THROUGH THIS CARD'S PRIMITIVES.
+--
+-- DESIGN.md (h) gives the serializeUint128 arm to serialize_int128.lua and the
+-- serializeBytes arm to serialize_bytes.lua, and this card's file may not add
+-- either. The conformance records are still this card's to pin: uint128 is
+-- exactly serializeBits64(lo, 64) then serializeBits64(hi, 64) (STANDARD.md,
+-- uint128), and a bytes block is an align followed by its bytes. Running them
+-- through the bits arms is the same wire, byte for byte.
+--------------------------------------------------------------------------------
+
+local function readUint128(stream)
+  local lo = { value = false }
+  local hi = { value = false }
+  if not stream:serializeBits64(lo, 64) then return false end
+  if not stream:serializeBits64(hi, 64) then return false end
+  return true, { lo = lo.value, hi = hi.value }
+end
+
+local function writeUint128(stream, value)
+  if not stream:serializeBits64({ value = value.lo }, 64) then return false end
+  return stream:serializeBits64({ value = value.hi }, 64)
+end
+
+local function readBytesViaBits(stream, n)
+  if not stream:serializeAlign() then return false end
+  local out = {}
+  for i = 1, n do
+    local h = { value = 0 }
+    if not stream:serializeBits(h, 8) then return false end
+    out[i] = string.char(h.value)
+  end
+  return true, table.concat(out)
+end
+
+local function writeBytesViaBits(stream, value)
+  if not stream:serializeAlign() then return false end
+  for i = 1, #value do
+    if not stream:serializeBits({ value = value:byte(i) }, 8) then return false end
+  end
+  return true
+end
+
+--------------------------------------------------------------------------------
 -- VECTOR PARSING
 --------------------------------------------------------------------------------
 
@@ -168,7 +211,9 @@ local function doRead(rec)
   elseif rec.op == "bool" then
     ok = rs:serializeBool(holder)
   elseif rec.op == "uint128" then
-    ok = rs:serializeUint128(holder)
+    local okRead, value = readUint128(rs)
+    if okRead then holder.value = value end
+    ok = okRead
   elseif rec.op == "align" then
     local pb = tonumber(rec.params.preceding_bits)
     if pb > 0 then
@@ -230,7 +275,7 @@ local function checkWriter(rec)
       lo = (limbs[1] or 0) | ((limbs[2] or 0) << 32),
       hi = (limbs[3] or 0) | ((limbs[4] or 0) << 32),
     }
-    ok = ws:serializeUint128({ value = value })
+    ok = writeUint128(ws, value)
   elseif rec.op == "align" then
     local pb = tonumber(rec.params.preceding_bits)
     if pb > 0 then
@@ -373,16 +418,16 @@ local function runOps(stream, ops, ctx)
       end
     elseif op.type == "bytes" then
       if ctx.mode == "read" then
-        local h = { value = "" }
-        if not stream:serializeBytes(h, op.n) then return false end
-        ctx.values[#ctx.values + 1] = h.value
+        local ok, value = readBytesViaBits(stream, op.n)
+        if not ok then return false end
+        ctx.values[#ctx.values + 1] = value
       elseif ctx.mode == "write" then
         local tok = nextToken(ctx)
         local bin = {}
         for b in tok:gmatch("%x%x") do bin[#bin + 1] = string.char(tonumber(b, 16)) end
-        if not stream:serializeBytes({ value = table.concat(bin) }, op.n) then return false end
+        if not writeBytesViaBits(stream, table.concat(bin)) then return false end
       else
-        if not stream:serializeBytes({ value = string.rep("\0", op.n) }, op.n) then return false end
+        if not writeBytesViaBits(stream, string.rep("\0", op.n)) then return false end
       end
     end
   end
@@ -488,11 +533,12 @@ function TestSerializeBits()
   raises(function() WriteStream.new(64):serializeBits({ value = 1 }, 33) end, "bits must be in [1,32]")
   raises(function() WriteStream.new(64):serializeBits64({ value = 1 }, 65) end, "bits must be in [1,64]")
   raises(function() WriteStream.new(64):serializeBits({ value = 1.0 }, 1) end, "must be an integer")
+  raises(function() WriteStream.new(64):serializeBits({ value = 4294967296 }, 1) end, "in [0,4294967295]")
   raises(function() WriteStream.new(64):serializeUint8({ value = 300 }) end, "in [0,255]")
   raises(function() WriteStream.new(64):serializeUint16({ value = -1 }) end, "in [0,65535]")
   raises(function() WriteStream.new(64):serializeUint32({ value = 4294967296 }) end, "in [0,4294967295]")
   raises(function() WriteStream.new(64):serializeBool({ value = 1 }) end, "must be a boolean")
-  raises(function() WriteStream.new(64):serializeUint128({ value = { lo = 1, hi = "x" } }) end, "table { lo, hi }")
+  raises(function() WriteStream.new(64):serializeBits64({ value = 1 }, 0) end, "bits must be in [1,64]")
 
   -- serialize.go TestContinue (sentinel-driven loop)
   do
@@ -561,7 +607,8 @@ function TestSerializeBits()
     check(ms:serializeUint32({ value = 4294967295 }), "measure uint32")
     check(ms:serializeUint64({ value = -1 }), "measure uint64")
     check(ms:bitsProcessed() == 73 + 8 + 16 + 32 + 64, "measure uint counts")
-    check(ms:serializeUint128({ value = { lo = -1, hi = -1 } }), "measure uint128")
+    check(ms:serializeBits64({ value = -1 }, 64), "measure uint128 low half")
+    check(ms:serializeBits64({ value = -1 }, 64), "measure uint128 high half")
     check(ms:bitsProcessed() == 73 + 8 + 16 + 32 + 64 + 128, "measure uint128 count")
     check(ms:serializeAlign(), "measure align")
     check(ms:bitsProcessed() == 73 + 8 + 16 + 32 + 64 + 128 + 7, "measure align count")

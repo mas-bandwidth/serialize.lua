@@ -54,6 +54,9 @@ M.methods = {
     end,
     checkValue = function(value)
       if mathtype(value) ~= "integer" then intErr("bits value") end
+      if value < 0 or value > 0xffffffff then
+        error("serialize: bits value must be in [0,4294967295]", 2)
+      end
     end,
     write = armWrite,
     read = armRead,
