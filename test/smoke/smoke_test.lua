@@ -40,6 +40,14 @@ local function installProbe()
           end,
           measure = function(s, value, bits) return s:_measure(bits) end,
         },
+        serializeTyped = {
+          checkValue = function(value)
+            if math.type(value) ~= "integer" then error("serialize: probe value must be an integer", 0) end
+          end,
+          write = function(s, value) return s:_writeBits(value, 1) end,
+          read = function(s) return false end,
+          measure = function(s, value) return s:_measure(1) end,
+        },
         serializeLiar = {
           write = function() return false end,
           read = function() return true, 1 end,
@@ -133,6 +141,11 @@ function TestSmoke()
   check(rs:serializeObject(object) == false and not called, "object refuses on a failed stream without calling it")
   check(rs:bitsProcessed() == 0 and rs:bytesProcessed() == 0, "a failed stream consumed nothing")
   check(rs:_readBits(1) == nil, "the read primitive refuses on a failed stream")
+  -- a byte count too large to multiply by 8 still refuses as Overflow (the bounds
+  -- test is made in bytes, as serialize.go makes it) rather than wrapping
+  local brs = serialize.ReadStream.new("")
+  check(brs:_readBytes(1 << 61) == nil and brs:error() == serialize.SerializeError.Overflow,
+    "a huge byte count latches Overflow")
   rs:reset("")
   check(rs:ok(), "reset clears the latch")
 
@@ -160,6 +173,13 @@ function TestSmoke()
   local lrs = serialize.ReadStream.new("")
   lrs:_fail(serialize.SerializeError.Overflow)
   check(liar.read(lrs, { value = 0 }) == false, "a failed stream never reaches the arm")
+
+  -- a value check (checkValue) raises on write and measure on a failed stream
+  -- too: misuse raises on a healthy stream and a failed one alike (DESIGN.md (g))
+  local typed = S.method(PROBE, "serializeTyped", 1)
+  raises(function() typed.write(ws, { value = 1.0 }) end, "serialize: probe value must be an integer")
+  raises(function() typed.measure(ms, { value = "x" }) end, "serialize: probe value must be an integer")
+  check(typed.write(ws, { value = 1 }) == false, "a well-typed value on a failed stream fails without raising")
 
   -- Continue and Until fold the latch into the loop condition (serialize.go): a
   -- stream whose serializeBool fails stops the loop at once, whatever the holder

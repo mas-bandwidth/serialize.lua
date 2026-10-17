@@ -138,7 +138,9 @@ end
 --   2. the family is loaded (lazily), else raise not implemented;
 --   3. the arm's check(...) runs over the arguments other than the holder,
 --      raising on API misuse exactly where serialize.go panics, on a healthy
---      stream and a failed one alike;
+--      stream and a failed one alike; on write and measure the arm's
+--      checkValue runs too, over the same arguments with holder.value in the
+--      holder's place (the type and domain checks of DESIGN.md (c));
 --   4. a failed stream returns false: nothing is consumed, nothing is written
 --      and the holder is untouched (STANDARD.md, Reader Obligations, "Failure
 --      is terminal": every read consults the failure state before it does
@@ -161,6 +163,7 @@ function M.method(fam, name, holderIndex)
         if type(holder) ~= "table" then holderMisuse(name) end
         local a = get()
         if a.check then a.check(...) end
+        if a.checkValue then a.checkValue(holder.value, ...) end
         if self._err ~= nil then return false end
         return settle(self, name, a.write(self, holder.value, ...))
       end,
@@ -180,6 +183,7 @@ function M.method(fam, name, holderIndex)
         if type(holder) ~= "table" then holderMisuse(name) end
         local a = get()
         if a.check then a.check(...) end
+        if a.checkValue then a.checkValue(holder.value, ...) end
         if self._err ~= nil then return false end
         return settle(self, name, a.measure(self, holder.value, ...))
       end,
@@ -190,6 +194,7 @@ function M.method(fam, name, holderIndex)
         if type(holder) ~= "table" then holderMisuse(name) end
         local a = get()
         if a.check then a.check(first, ...) end
+        if a.checkValue then a.checkValue(first, holder.value, ...) end
         if self._err ~= nil then return false end
         return settle(self, name, a.write(self, first, holder.value, ...))
       end,
@@ -209,6 +214,7 @@ function M.method(fam, name, holderIndex)
         if type(holder) ~= "table" then holderMisuse(name) end
         local a = get()
         if a.check then a.check(first, ...) end
+        if a.checkValue then a.checkValue(first, holder.value, ...) end
         if self._err ~= nil then return false end
         return settle(self, name, a.measure(self, first, holder.value, ...))
       end,
@@ -257,9 +263,10 @@ local function objectMisuse()
 end
 
 -- STANDARD.md, object: composition, no bytes of its own. serialize.go: a
--- failure the object returns is latched (the object's own kind, or
--- ValueOutOfRange when it gives none), and an error latched inside it fails
--- the call even when the object returns true.
+-- failure the object returns is latched, and an error latched inside it fails
+-- the call even when the object returns true. The object returns false and,
+-- optionally, its own kind (any non-nil value, latched as given, as Go latches
+-- any error); with none, ValueOutOfRange (DESIGN.md (a), deviation 12).
 local function serializeObject(self, object)
   if not isObject(object) then objectMisuse() end
   if self._err ~= nil then return false end
@@ -355,7 +362,8 @@ function WriteStream:_writeBytes(s)
   if self._bits % 8 ~= 0 then error(PANIC_NOT_ALIGNED, 2) end
   local n = #s
   if n == 0 then return true end
-  if self._bits + n * 8 > self._numBits then return fail(self, OVERFLOW) end
+  -- compared in bytes, as serialize.go does, so a huge count cannot wrap the test
+  if n > (self._numBits - self._bits) // 8 then return fail(self, OVERFLOW) end
   writer(self):writeBytes(s)
   self._bits = self._bits + n * 8
   return true
@@ -443,7 +451,9 @@ function ReadStream:_readBytes(n)
   if self._bits % 8 ~= 0 then error(PANIC_NOT_ALIGNED, 2) end
   if mathtype(n) ~= "integer" or n < 0 then error("serialize: a byte count is a non-negative integer", 2) end
   if n == 0 then return "" end
-  if self._bits + n * 8 > self._numBits then
+  -- compared in bytes, as serialize.go does (read_stream.go SerializeBytes), so a
+  -- huge count cannot wrap the test
+  if n > (self._numBits - self._bits) // 8 then
     fail(self, OVERFLOW)
     return nil
   end

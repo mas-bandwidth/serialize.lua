@@ -224,6 +224,14 @@ ReadStream, never straight to a BitReader.
     128-bit helpers, `Continue`, `Until`, `flush`) are serialize.go's names
     in serialize.js's camelCase.
 11. **64-bit values are integers**, not BigInts: (c).
+12. **A failing object gives a kind, not an error value**: serialize.go's
+    `Serializer` returns any `error` and the stream latches it; Lua has no
+    error values, so `object:serialize(stream)` returns `false` and,
+    optionally, a kind (any non-nil value, latched as given, as Go latches
+    any error). An object that fails without giving one latches
+    `ValueOutOfRange`, the kind serialize.go uses for a value its reader
+    refuses. An object that returns `true` after a primitive inside it
+    latched still fails the call (serialize.go returns `s.err`).
 
 ## (b) BIT ORDER AND ENDIANNESS
 
@@ -293,8 +301,10 @@ native 64-bit integer subtype (`math.maxinteger` is `9223372036854775807`,
   coercion: a float where an integer belongs (`1.0` included: `math.type`
   tells them apart exactly), an integer outside its Go type's domain (a
   `serializeUint8` of 300, a `serializeInt` bound outside int32), a non-string
-  where a string belongs. serialize.go's type system refuses these at compile
-  time; the strict writer refuses them at the call. A value INSIDE its Go type
+  where a string belongs, and an integer where a float belongs (a
+  `serializeFloat` or `serializeDouble` holder holds a float: `1.0`, never
+  `1`). serialize.go's type system refuses these at compile time; the strict
+  writer refuses them at the call (the arm's `checkValue`, (h)). A value INSIDE its Go type
   but outside the call's `[min,max]` is not misuse: it latches
   `ValueOutOfRange`, exactly where serialize.go does (g).
 - Bit counts and byte counts are integers; arithmetic on them never meets
@@ -312,13 +322,21 @@ PORT-LUA.md, BYTE BUFFERS, for this library.
   friends, every format naming `<`. The bounds check is made BEFORE any load
   (`bit_index + n > 8 * #data`, STANDARD.md, Reader Obligations), so
   `string.unpack` never runs off the end of the string and hostile bytes never
-  raise. A word load that would reach past the end takes its window from a
-  zero-padded copy of the final bytes (serialize.go's tail window), made once
-  per `reset`: the copying entry point STANDARD.md admits ("A copying entry
-  point that takes an exact-length input and copies it into a slack backed
-  buffer is admitted as a convenience"). Padding bytes are loaded, never
-  interpreted. `readBytes` returns `string.sub` of the data: a fresh string,
-  never aliasing anything mutable.
+  raise. **The allocation contract** (STANDARD.md, Reader Obligations,
+  "every runtime states that its callers are under it"): a caller passes the
+  exact packet as a Lua string and owes NO slack, because a Lua string cannot
+  carry bytes past its length. The reader pays for that once, at the
+  boundary: `BitReader.new` and `reset` keep the data with 16 zero bytes
+  appended (one concatenation per packet), so every word load in the hot path
+  is one branchless `string.unpack` and no per-read near-end branch exists.
+  That is the copying entry point STANDARD.md admits ("A copying entry point
+  that takes an exact-length input and copies it into a slack backed buffer
+  is admitted as a convenience, ... because it prices the copy once at the
+  boundary rather than per operation in the hot path"); a per-read tail
+  branch (serialize.go's tail window) is the slower option the speed rule
+  refuses, and is not used. Padding bytes are loaded, never interpreted.
+  `readBytes` returns `string.sub` of the data: a fresh string, never
+  aliasing anything mutable.
 - **A WRITE** is a table of pieces (8-byte words from `string.pack("<i8",
   word)` and block-copied substrings) joined once by `table.concat` when the
   bytes are asked for, never repeated string concatenation.
@@ -360,6 +378,17 @@ does.
   by the read rule. The float card (serialize_float.lua) owns `fround`,
   `float32Bits` and `float32FromBits`, exported on its module table for the
   compressed-float card; they are not entry names.
+- **compressed_float's parameters are float32**, as serialize.go's
+  `min, max, resolution float32` and `*float32` value are: the arm rounds
+  `min`, `max`, `resolution` and the written value with `fround` first,
+  exactly the `float32()` a Go caller applies at the call site, and a value
+  that is NaN or infinite after rounding is misuse and raises (STANDARD.md,
+  compressed_float, "Non-finite inputs are non-conforming": "Conforming
+  writers assert in checked builds"; serialize.go clamps such a value
+  instead, and this writer is the checked build, (g)). For
+  `serializeCompressedFloatPrecomputed` the constants must be exactly what
+  `compressedFloatParams` derives (`delta` exactly a float32 among them),
+  else it raises serialize.go's `panicPrecomputedFloat`.
 - **compressed_float's arithmetic is float32**, emulated by `fround` after
   EVERY operation (STANDARD.md, compressed_float: "This arithmetic is
   `float32`, and the two roundings are part of the format"): `delta =
@@ -494,19 +523,28 @@ return {
 
 - `check(...)` receives the call's arguments other than the holder, and
   raises on misuse. It runs before the latch check, on every stream.
+- `checkValue(...)` (optional) receives the arguments with `holder.value` in
+  the holder's place, on write and measure only, and raises on a value of the
+  wrong Lua type or outside its Go type's domain ((c)), or a `serializeBytes`
+  value whose length is not `numBytes`. It also runs before the latch check,
+  so misuse raises on a failed stream too. A value inside its Go type but
+  outside `[min,max]` is not misuse: the write arm latches it.
 - `write(stream, ...)` and `measure(stream, ...)` receive the arguments with
   `holder.value` in the holder's place (`serializeIntRelative`:
   `write(stream, previous, value)`). They return `true`, or `false` after
-  latching through a primitive or `stream:_fail(kind)`.
+  latching through a primitive or `stream:_fail(kind)`; `kind` is one of
+  `SerializeError`'s three.
 - `read(stream, ...)` receives the arguments without the holder and returns
   `true, value` or `false` (after latching). It never touches a holder: the
   stream assigns it.
 - An arm that returns `false` without a latched error, `true` on a failed
   stream, or a non-boolean, raises `serialize: <name> returned false without
   latching an error` (and its siblings): the contract is held, not trusted.
-- A family module requires another by basename when it needs it
-  (`serialize_fixed.lua` requires `serialize_int128` for Fixed128), never
-  through the entry.
+- A family module reaches another family through the stream module's loader,
+  `require("serialize_stream").family("int128", "serializeFixed")`, never a
+  bare `require` and never through the entry, so a sibling whose file is
+  absent raises `serialize: serializeFixed not implemented` rather than
+  `module not found`.
 
 **The primitives an arm calls**, all in `serialize_stream.lua`, each checking
 the latch first:
