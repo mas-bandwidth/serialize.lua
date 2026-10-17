@@ -1,19 +1,26 @@
 -- fuzz/driver.lua: the Lua half of the differential. Reads a batch file given
--- as arg[1] (the path) and writes, for each program, one line to stdout:
---   HEX <lowercase hex bytes of the written packet>
+-- as arg[1] (the path) and writes one result line per program to stdout:
+--   HEX <lowercase hex bytes>       a written packet
+--   READ <n> <token>...             a read: n ops accepted, then their values
 -- A program is a sequence of lines:
---   BEG <capacity>   start a write program; capacity is the buffer in bytes (mult of 8)
---   <op> <args...>   one serialize operation (see the dispatch below)
---   FLUSH             flush the writer and print the HEX line
---   END               end the program
--- The ops are deliberately chosen so values are integers or hex strings, avoiding
--- float-vs-integer ambiguity on the boundary. The writer is strict: a value out of
--- range latches, and later ops write nothing, exactly as serialize.go behaves, so the
--- bytes are the same as the Go side's even when a program latches an error.
+--   W <capacity>      start a write program; capacity in bytes (multiple of 8)
+--   R <hex>           start a read program over those bytes
+--   <op> <args...>    one serialize operation (see the dispatch below)
+--   END               finish: flush a write, or report a read
+-- Values cross the process boundary as integers or hex strings, never as
+-- float-vs-integer ambiguity. The writer is strict, and a read latches the
+-- first refusal and reports how many ops decoded before it (READ <n>), so the
+-- Go side can compare accept/refuse and every decoded value.
 package.path = "./src/?.lua"
 
 local serialize = require("serialize")
+local floatmod = require("serialize_float")
 local WriteStream = serialize.WriteStream
+local ReadStream = serialize.ReadStream
+
+local fround = floatmod.fround
+local float32Bits = floatmod.float32Bits
+local float32FromBits = floatmod.float32FromBits
 
 local function hex(s)
   return (s:gsub(".", function(c) return string.format("%02x", c:byte()) end))
@@ -24,83 +31,150 @@ local function fromhex(h)
   return (h:gsub("%x%x", function(cc) return string.char(tonumber(cc, 16)) end))
 end
 
-local function udiv(a, b)
-  -- unsigned division helper for 64-bit bit patterns
-  if a >= 0 then
-    return math.floor(a / b)
-  end
-  return math.floor((a - (b - 1)) / b)
-end
+local function H(s) return tonumber(s, 16) end
 
 local s
 local function op_bits(args)
-  local v, w = tonumber(args[1]), tonumber(args[2])
-  return s:serializeBits({ value = v }, w)
+  local h = { value = H(args[1]) }
+  return s:serializeBits(h, tonumber(args[2])), h
 end
 local function op_bits64(args)
-  local v, w = tonumber(args[1]), tonumber(args[2])
-  return s:serializeBits64({ value = v }, w)
+  local h = { value = H(args[1]) }
+  return s:serializeBits64(h, tonumber(args[2])), h
 end
 local function op_bool(args)
-  local v = tonumber(args[1])
-  return s:serializeBool({ value = v == 1 })
+  local h = { value = tonumber(args[1]) == 1 }
+  return s:serializeBool(h), h
 end
-local function op_u8(args) return s:serializeUint8({ value = tonumber(args[1]) }) end
-local function op_u16(args) return s:serializeUint16({ value = tonumber(args[1]) }) end
-local function op_u32(args) return s:serializeUint32({ value = tonumber(args[1]) }) end
-local function op_u64(args) return s:serializeUint64({ value = tonumber(args[1]) }) end
+local function op_u8(args)
+  local h = { value = tonumber(args[1]) }
+  return s:serializeUint8(h), h
+end
+local function op_u16(args)
+  local h = { value = tonumber(args[1]) }
+  return s:serializeUint16(h), h
+end
+local function op_u32(args)
+  local h = { value = tonumber(args[1]) }
+  return s:serializeUint32(h), h
+end
+local function op_u64(args)
+  local h = { value = H(args[1]) }
+  return s:serializeUint64(h), h
+end
 local function op_int(args)
-  local v, mn, mx = tonumber(args[1]), tonumber(args[2]), tonumber(args[3])
-  return s:serializeInt({ value = v }, mn, mx)
+  local h = { value = tonumber(args[1]) }
+  return s:serializeInt(h, tonumber(args[2]), tonumber(args[3])), h
 end
 local function op_int64(args)
-  local v, mn, mx = tonumber(args[1]), tonumber(args[2]), tonumber(args[3])
-  return s:serializeInt64({ value = v }, mn, mx)
+  local h = { value = H(args[1]) }
+  return s:serializeInt64(h, H(args[2]), H(args[3])), h
 end
-local function op_float(args)
-  local bits = tonumber(args[1])
-  local v = string.unpack("f", string.pack("<I4", bits))
-  return s:serializeFloat({ value = v })
+local function op_u128(args)
+  local h = { value = { lo = H(args[1]), hi = H(args[2]) } }
+  return s:serializeUint128(h), h
 end
-local function op_double(args)
-  local hi, lo = tonumber(args[1]), tonumber(args[2])
-  local v = string.unpack("d", string.pack("<I4I4", lo, hi))
-  return s:serializeDouble({ value = v })
-end
-local function op_cfloat(args)
-  local v, mn, mx, res = tonumber(args[1]), tonumber(args[2]), tonumber(args[3]), tonumber(args[4])
-  return s:serializeCompressedFloat({ value = v }, mn, mx, res)
-end
-local function op_bytes(args)
-  return s:serializeBytes({ value = fromhex(args[1]) }, tonumber(args[2]))
-end
-local function op_str(args)
-  return s:serializeString({ value = fromhex(args[1]) }, tonumber(args[2]))
-end
-local function op_wstr(args)
-  local h = args[1]
-  return s:serializeWideString({ value = fromhex(h) }, tonumber(args[2]))
-end
-local function op_align()
-  return s:serializeAlign()
-end
-local function op_intrel(args)
-  local prev, cur = tonumber(args[1]), tonumber(args[2])
-  return s:serializeIntRelative(prev, { value = cur })
+local function op_i128(args)
+  local mn = { lo = H(args[1]), hi = H(args[2]) }
+  local mx = { lo = H(args[3]), hi = H(args[4]) }
+  local h = { value = { lo = H(args[5]), hi = H(args[6]) } }
+  return s:serializeInt128(h, mn, mx), h
 end
 local function op_fixed64(args)
-  local v, ib, fb, mn, mx = tonumber(args[1]), tonumber(args[2]), tonumber(args[3]), tonumber(args[4]), tonumber(args[5])
-  return s:serializeFixed64({ value = v }, ib, fb, mn, mx)
+  local h = { value = tonumber(args[1]) }
+  return s:serializeFixed(h, tonumber(args[2]), tonumber(args[3]),
+    tonumber(args[4]), tonumber(args[5])), h
+end
+local function op_fixed128(args)
+  local h = { value = { lo = H(args[1]), hi = H(args[2]) } }
+  return s:serializeFixed(h, tonumber(args[3]), tonumber(args[4]),
+    tonumber(args[5]), tonumber(args[6])), h
+end
+local function op_intrel(args)
+  local h = { value = tonumber(args[2]) }
+  return s:serializeIntRelative(tonumber(args[1]), h), h
+end
+local function op_float(args)
+  local h = { value = float32FromBits(H(args[1])) }
+  return s:serializeFloat(h), h
+end
+local function op_double(args)
+  local bits = H(args[1])
+  local h = { value = string.unpack("<d", string.pack("<i8", bits)) }
+  return s:serializeDouble(h), h
+end
+local function op_cfloat(args)
+  local h = { value = float32FromBits(H(args[1])) }
+  return s:serializeCompressedFloat(h, float32FromBits(H(args[2])),
+    float32FromBits(H(args[3])), float32FromBits(H(args[4]))), h
+end
+local function op_bytes(args)
+  local h = { value = fromhex(args[1]) }
+  return s:serializeBytes(h, tonumber(args[2])), h
+end
+local function op_str(args)
+  local h = { value = fromhex(args[1]) }
+  return s:serializeString(h, tonumber(args[2])), h
+end
+local function op_wstr(args)
+  local h = { value = fromhex(args[1]) }
+  return s:serializeWideString(h, tonumber(args[2])), h
+end
+local function op_align()
+  return s:serializeAlign(), nil
+end
+local function op_object(args)
+  local obj = { u = tonumber(args[1]), b = tonumber(args[2]) == 1 }
+  function obj:serialize(stream)
+    local reading = stream:isReading()
+    local uh = { value = reading and 0 or self.u }
+    if not stream:serializeUint32(uh) then return false end
+    self.u = uh.value
+    local bh = { value = reading and false or self.b }
+    if not stream:serializeBool(bh) then return false end
+    self.b = bh.value
+    return true
+  end
+  return s:serializeObject(obj), obj
 end
 
 local OPS = {
   bits = op_bits, bits64 = op_bits64, bool = op_bool,
   u8 = op_u8, u16 = op_u16, u32 = op_u32, u64 = op_u64,
-  int = op_int, int64 = op_int64,
+  int = op_int, int64 = op_int64, u128 = op_u128, i128 = op_i128,
+  fixed64 = op_fixed64, fixed128 = op_fixed128,
   float = op_float, double = op_double, cfloat = op_cfloat,
   bytes = op_bytes, str = op_str, wstr = op_wstr,
-  align = op_align, intrel = op_intrel, fixed64 = op_fixed64,
+  align = op_align, intrel = op_intrel, object = op_object,
 }
+
+local function token(kind, v)
+  if kind == "bool" then
+    return v and "1" or "0"
+  elseif kind == "float" or kind == "cfloat" then
+    return string.format("%08x", float32Bits(v))
+  elseif kind == "double" then
+    return string.format("%016x", string.unpack("<i8", string.pack("<d", v)))
+  elseif kind == "bytes" or kind == "str" or kind == "wstr" then
+    local h = hex(v)
+    if h == "" then return "." end
+    return h
+  elseif kind == "align" then
+    return "-"
+  elseif kind == "u128" or kind == "i128" or kind == "fixed128" then
+    return string.format("%d,%d", v.lo, v.hi)
+  elseif kind == "object" then
+    return string.format("%d,%d", v.u, v.b and 1 or 0)
+  end
+  return string.format("%d", v)
+end
+
+local mode, ops, accept
+local function beginRead(h)
+  s = ReadStream.new(fromhex(h))
+  mode = "read"
+  ops, accept = {}, 0
+end
 
 local f = assert(io.open(arg[1], "rb"))
 local blk = f:read("*a")
@@ -110,14 +184,22 @@ for line in (blk .. "\n"):gmatch("([^\r\n]+)\r?\n") do
   if line == "" then
     -- skip
   elseif line == "END" then
+    if mode == "write" then
+      s:flush()
+      io.write("HEX " .. hex(s:data()) .. "\n")
+    else
+      local parts = { "READ", string.format("%d", accept) }
+      for _, t in ipairs(ops) do parts[#parts + 1] = t end
+      io.write(table.concat(parts, " ") .. "\n")
+    end
     s = nil
-  elseif line == "FLUSH" then
-    s:flush()
-    io.write("HEX " .. hex(s:data()) .. "\n")
   else
     local first, rest = line:match("^(%S+)%s*(.*)$")
-    if first == "BEG" then
+    if first == "W" then
       s = WriteStream.new(tonumber(rest))
+      mode = "write"
+    elseif first == "R" then
+      beginRead(rest)
     else
       local op = OPS[first]
       if op == nil then
@@ -127,7 +209,25 @@ for line in (blk .. "\n"):gmatch("([^\r\n]+)\r?\n") do
       for a in (rest .. " "):gmatch("(%S+)%s*") do
         args[#args + 1] = a
       end
-      op(args)
+      if mode == "read-failed" or (mode == "read" and s:error() ~= nil) then
+        -- terminal stream: later ops are no-ops, report the refusal index
+      else
+        local ok, holder = op(args)
+        if mode == "read" then
+          if ok then
+            accept = accept + 1
+            if holder ~= nil then
+              local val = holder.value
+              if first == "object" then val = holder end
+              ops[#ops + 1] = token(first, val)
+            else
+              ops[#ops + 1] = "-"
+            end
+          else
+            mode = "read-failed"
+          end
+        end
+      end
     end
   end
 end
