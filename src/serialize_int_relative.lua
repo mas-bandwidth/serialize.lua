@@ -19,9 +19,12 @@ local M = {}
 
 local mathtype = math.type
 local PANIC_INT_RELATIVE_DOMAIN = "serialize: int relative previous must be in [0,2147483647]"
-local PANIC_INT_RELATIVE_CURRENT = "serialize: int relative current must be in [0,2147483647]"
+local PANIC_INT_RELATIVE_CURRENT = "serialize: int relative current must be in [-2147483648,2147483647]"
 
 -- The int_relative domain is the non-negative int32 range (STANDARD.md int_relative).
+-- The operation's API type is the signed int32 (DESIGN.md (c)): a current inside
+-- that type but outside the domain latches ValueOutOfRange in the write arm.
+local INT32_MIN = -2147483648
 local RANGE_MAX = 2147483647
 
 -- The bounded difference buckets (serialize.go stream.go intRelativeBuckets). Each
@@ -35,8 +38,8 @@ local BUCKETS = {
   { min = 4378, max = 69914, bits = 17 },
 }
 
-local function checkDomain(v, msg)
-  if mathtype(v) ~= "integer" or v < 0 or v > RANGE_MAX then
+local function checkDomain(v, msg, min)
+  if mathtype(v) ~= "integer" or v < (min or 0) or v > RANGE_MAX then
     error(msg, 0)
   end
 end
@@ -56,8 +59,11 @@ methods.check = function(previous)
   checkDomain(previous, PANIC_INT_RELATIVE_DOMAIN)
 end
 
+-- The value check is over the Go int32 type, not the operation's non-negative
+-- domain (DESIGN.md (c), (h)): a negative current is inside the type and the
+-- write/measure arm latches it as ValueOutOfRange, as serialize.go does.
 methods.checkValue = function(previous, current)
-  checkDomain(current, PANIC_INT_RELATIVE_CURRENT)
+  checkDomain(current, PANIC_INT_RELATIVE_CURRENT, INT32_MIN)
 end
 
 -- Writer (STANDARD.md int_relative: "The writer takes the first tier the difference

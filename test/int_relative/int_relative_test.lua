@@ -160,4 +160,39 @@ function TestSerializeIntRelative()
     raises(function() serialize.ReadStream.new(""):serializeIntRelative(-1, { value = 0 }) end, want)
     raises(function() serialize.MeasureStream.new():serializeIntRelative(-1, { value = 5 }) end, want)
   end
+
+  -- a current inside the int32 type but outside the operation's domain is not
+  -- misuse: write and measure latch ValueOutOfRange and write nothing
+  -- (serialize.go WriteStream/MeasureStream SerializeIntRelative; DESIGN.md (c), (h)).
+  do
+    for _, current in ipairs({ -1, -5, -2147483648 }) do
+      local ws = serialize.WriteStream.new(8)
+      local wh = { value = current }
+      check(ws:serializeIntRelative(100, wh) == false,
+        "negative current " .. current .. " write succeeded")
+      check(ws:error() == ValueOutOfRange,
+        "negative current " .. current .. " write latched " .. tostring(ws:error()))
+      check(ws:bitsProcessed() == 0,
+        "negative current " .. current .. " write consumed bits")
+      check(wh.value == current, "negative current " .. current .. " write changed the holder")
+
+      local ms = serialize.MeasureStream.new()
+      local mh = { value = current }
+      check(ms:serializeIntRelative(100, mh) == false,
+        "negative current " .. current .. " measure succeeded")
+      check(ms:error() == ValueOutOfRange,
+        "negative current " .. current .. " measure latched " .. tostring(ms:error()))
+      check(ms:bitsProcessed() == 0,
+        "negative current " .. current .. " measure consumed bits")
+    end
+  end
+
+  -- a current outside the int32 type is API misuse on write and measure
+  do
+    local want = "serialize: int relative current"
+    for _, current in ipairs({ -2147483649, 2147483648, 5.0 }) do
+      raises(function() serialize.WriteStream.new(8):serializeIntRelative(0, { value = current }) end, want)
+      raises(function() serialize.MeasureStream.new():serializeIntRelative(0, { value = current }) end, want)
+    end
+  end
 end
