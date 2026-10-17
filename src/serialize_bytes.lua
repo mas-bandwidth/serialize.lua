@@ -270,6 +270,7 @@ methods.serializeWideString = {
         return s:_fail(VALUE_OUT_OF_RANGE)
       end
       if unit >= 0xD800 and unit <= 0xDBFF then
+        if j == length then return s:_fail(VALUE_OUT_OF_RANGE) end
         local low = s:_readBits(32)
         if low == nil then return false end
         if low < 0xDC00 or low > 0xDFFF then return s:_fail(VALUE_OUT_OF_RANGE) end

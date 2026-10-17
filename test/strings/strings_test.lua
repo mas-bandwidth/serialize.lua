@@ -326,6 +326,23 @@ local function testWideStringLengthValidatedBeforeNarrowing(serialize)
   check(ws3:serializeWideString({ value = "ABC" }, 4), "wide unit count one less fits")
 end
 
+-- STANDARD.md "wstring": a high surrogate as the final transmitted group must be
+-- refused (STANDARD.md line 647). A declared length of 1 whose single group is a
+-- high surrogate must fail even when a valid low surrogate immediately follows in
+-- the buffer: the low lies beyond the declared length, so the high is unpaired.
+local function testWideStringFinalHighSurrogate(serialize)
+  -- length field (bufferSize 8, 3 bits) = 1; group 0xD800; then group 0xDC00
+  local data = string.char(
+    0x01, 0xC0, 0x06, 0x00, 0x00, 0xE0, 0x06, 0x00, 0x00)
+  local rs = serialize.ReadStream.new(data)
+  local h = { value = "" }
+  local ok = rs:serializeWideString(h, 8)
+  check(not ok, "final high surrogate must be refused")
+  check(rs:error() == serialize.SerializeError.ValueOutOfRange, "refusal kind")
+  check(h.value == "", "refused read leaves destination untouched")
+  check(rs:serializeWideString({ value = "" }, 8) == false, "refused stream is terminal")
+end
+
 function TestSerializeStrings()
   local serialize = require("serialize")
   local files = {
@@ -345,4 +362,5 @@ function TestSerializeStrings()
   end
   testWideStringFamilyPin(serialize)
   testWideStringLengthValidatedBeforeNarrowing(serialize)
+  testWideStringFinalHighSurrogate(serialize)
 end
