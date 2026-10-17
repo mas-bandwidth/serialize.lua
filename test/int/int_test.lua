@@ -249,10 +249,18 @@ local function refBitsReq64(min, max)
 end
 
 function TestSerializeInt()
+  -- loading the int families creates no global (DESIGN.md (f)): snapshot before
+  -- the first call, which is what makes the lazy loader require them
+  local before = {}
+  for k in pairs(_G) do before[k] = true end
+
   -- 1. the conformance corpus, record by record, with per-file counts
   runFile("int", "conformance/int.txt")
   runFile("int64", "conformance/int64.txt")
   runFile("int128", "conformance/int128.txt")
+  for k in pairs(_G) do
+    check(before[k], "loading the int families created the global " .. tostring(k))
+  end
 
   -- 2. serialize.go TestBitsRequired / TestBitsRequired64 edge cases, through the
   -- actual serialized width (a measure of the shipped range-width logic)

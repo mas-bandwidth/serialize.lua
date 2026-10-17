@@ -417,7 +417,7 @@ local uint128 = {
   end,
 }
 
-M = {}
+local M = {}
 M.methods = { serializeInt128 = int128, serializeUint128 = uint128 }
 M.api = {
   bitsRequired128 = function(min, max) return bitsRequired128(min, max) end,

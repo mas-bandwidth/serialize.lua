@@ -148,7 +148,7 @@ local int64 = {
   end,
 }
 
-M = {}
+local M = {}
 M.methods = { serializeInt = int, serializeInt64 = int64 }
 M.api = {}
 return M
