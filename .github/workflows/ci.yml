@@ -1,0 +1,53 @@
+name: ci
+on:
+  push:
+    branches: [main, sprint/serialize-lua]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive the interpreter cache key from the Makefile pin
+        run: |
+          SHA="$(sed -n 's/^LUA_SHA256[[:space:]]*:= //p' Makefile)"
+          echo "LUA_CACHE_KEY=dist-$SHA" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@v4
+        with:
+          path: dist
+          key: ${{ env.LUA_CACHE_KEY }}
+
+      - name: Fetch and build the pinned interpreter
+        run: make dist-lua
+
+      - name: Set up Go for fuzzing
+        if: hashFiles('fuzz/go.mod') != ''
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: fuzz/go.mod
+
+      - name: Fuzz
+        if: hashFiles('fuzz/go.mod') != ''
+        run: make fuzz
+
+      - name: Run the test suite
+        run: make test
+
+  corpus:
+    name: STANDARD.md and conformance/ match mas-bandwidth/serialize
+    runs-on: ubuntu-24.04
+    env:
+      SERIALIZE_TAG: v1.17.0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out mas-bandwidth/serialize at the pinned tag
+        run: git clone --quiet --depth 1 --branch "$SERIALIZE_TAG" https://github.com/mas-bandwidth/serialize.git /tmp/serialize
+
+      - name: conformance/ matches the pinned release
+        run: diff -ru /tmp/serialize/conformance conformance
+
+      - name: STANDARD.md matches the pinned release
+        run: diff -ru /tmp/serialize/STANDARD.md STANDARD.md
