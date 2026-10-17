@@ -211,6 +211,13 @@ function TestSerializeFloat()
     { 0x76973EA0E7790949, 0x7F800000 },
     { 0x0BF1496E2970124B, 0x00000000 },
     { 0x66B609B2E88D83A5, 0x7F800000 },
+    -- subnormal rounding regressions (JOB.md attempt 2): single rounding of
+    -- the exact double onto the 2^-149 grid, not double-rounding through a
+    -- pre-rounded 24-bit significand; each was computed by Go's float32().
+    { 0x38079409D4CD951F, 0x005E5027 },
+    { 0x38019D69AB4DE00B, 0x004675A7 },
+    { 0xB806E9532EE11361, 0x805BA54D },
+    { 0x37CA83FA083B0854, 0x0006A0FF },
   }
   for _, edge in ipairs(FROUND) do
     local inbits, want = edge[1], edge[2]

@@ -35,6 +35,21 @@ local function doubleBits(v)
   return string.unpack("<i8", string.pack("<d", v))
 end
 
+-- roundDivByPow2(M, d): M / 2^d rounded to the nearest integer, ties to even
+-- (d >= 1). Used only on the rare subnormal path.
+local function roundDivByPow2(M, d)
+  if d >= 54 then return 0 end
+  local q = M >> d
+  local r = M & ((1 << d) - 1)
+  local half = 1 << (d - 1)
+  if r == half then
+    if (q & 1) == 1 then q = q + 1 end
+  elseif r > half then
+    q = q + 1
+  end
+  return q
+end
+
 -- float32Bits(v): the 32-bit IEEE-754 single pattern of double v, rounded as
 -- Go's float32(v) conversion (DESIGN.md (e)). Assembles the pattern from sign,
 -- exponent and mantissa with integer bit surgery, never a float conversion.
@@ -109,25 +124,11 @@ local function float32Bits(v)
     return (s << 31) | ((E + 127) << 23) | (t - (1 << 23))
   end
 
-  -- subnormal single: value = mantissa * 2^-149, rounded to nearest even
-  local shift2 = -q - 149
-  local m23
-  if shift2 >= 25 then
-    m23 = 0
-  elseif shift2 == 24 then
-    if t > (1 << 23) then m23 = 1 else m23 = 0 end
-  else
-    local half = 1 << (shift2 - 1)
-    local q2 = t >> shift2
-    local r = t & ((half << 1) - 1)
-    if r == half then
-      if (q2 & 1) == 1 then m23 = q2 + 1 else m23 = q2 end
-    elseif r > half then
-      m23 = q2 + 1
-    else
-      m23 = q2
-    end
-  end
+  -- subnormal single: the exact value M*2^p rounded straight onto the 2^-149
+  -- grid, ties to even, in one rounding from the exact M (DESIGN.md (e)).
+  -- Rounding the pre-rounded 24-bit t instead would double-round and pick the
+  -- wrong neighbor (JOB.md attempt 2). d = (p+149) negation > 0.
+  local m23 = roundDivByPow2(M, -p - 149)
   if m23 >= (1 << 23) then
     return (s << 31) | (1 << 23)
   end
