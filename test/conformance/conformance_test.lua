@@ -117,7 +117,11 @@ local function toPair(v)
 end
 
 local function valueEquals(a, b)
+  -- nil (an align step) and a decoded string (bytes/string/wstring) compare by
+  -- identity: an align step carries no value, and equal payloads are equal.
+  if a == b then return true end
   if type(a) == "boolean" or type(b) == "boolean" then return a == b end
+  if type(a) == "string" or type(b) == "string" then return a == b end
   if type(a) == "number" then a = toPair(a) end
   if type(b) == "number" then b = toPair(b) end
   if type(a) ~= "table" or type(b) ~= "table" then return false end
@@ -242,16 +246,24 @@ local function parseStep(str)
   return { op = op, args = args }
 end
 
+-- A read holder's initial value. It is a unique table so a refused read that
+-- leaves its destination untouched is distinguishable from one that wrote nil.
+local READ_SENTINEL = {}
+
 -- run one step on a stream. mode = "read"|"write"|"measure".
 -- For read: returns ok, value. For write/measure: value passed in, returns ok.
-local function runStep(stream, step, mode, value)
+-- `holder` is the caller's destination for this call; a read refusal must leave
+-- it exactly as it was (STANDARD.md, "A refused primitive read must leave its
+-- destination unwritten").
+local function runStep(stream, step, mode, value, holder)
   local op = step.op
   local s = stream
-  local holder
-  if mode == "read" then
-    holder = { value = nil }
-  else
-    holder = { value = value }
+  if holder == nil then
+    if mode == "read" then
+      holder = { value = nil }
+    else
+      holder = { value = value }
+    end
   end
   local function one(fn)
     if mode == "read" then
@@ -392,7 +404,9 @@ local function expandSteps(raw)
 end
 
 -- run a flat step list (with object groups) on a stream.
--- mode read returns values list; write/measure returns ok.
+-- mode read returns values list; write/measure returns ok. On a refusal it also
+-- returns the failing step's destination (holder) and index so the caller can
+-- check that a refusal wrote nothing.
 local function runSteps(stream, steps, mode)
   if mode == "read" then
     local values = {}
@@ -402,8 +416,9 @@ local function runSteps(stream, steps, mode)
       if st.op == "object" then
         values[i] = nil
       else
-        local ok, v = runStep(stream, st, "read")
-        if not ok then return false end
+        local holder = { value = READ_SENTINEL }
+        local ok, v = runStep(stream, st, "read", nil, holder)
+        if not ok then return false, values, { index = i, holder = holder } end
         values[i] = v
       end
     end
@@ -533,13 +548,18 @@ local function runRecord(rec, scratch)
   if rec.expect == "refused" then
     -- refused: read refuses, destination untouched, stream terminal
     local rs = serialize.ReadStream.new(data)
-    local ok = runSteps(rs, steps, "read")
+    local ok, _, failed = runSteps(rs, steps, "read")
     check(ok == false, rec.name .. ": refused read must fail")
-    -- terminal: further read also fails, consumes no bits
+    -- the failing primitive's caller destination must be exactly what it held
+    check(failed ~= nil and rawequal(failed.holder.value, READ_SENTINEL),
+      rec.name .. ": refused read must leave its destination untouched")
+    -- terminal: further read also fails, consumes no bits, writes nothing
     local before = rs:bitsProcessed()
-    local ok2 = runSteps(rs, steps, "read")
+    local ok2, _, failed2 = runSteps(rs, steps, "read")
     check(ok2 == false, rec.name .. ": refused stream must stay terminal")
     check(rs:bitsProcessed() == before, rec.name .. ": terminal read must consume no bits")
+    check(failed2 ~= nil and rawequal(failed2.holder.value, READ_SENTINEL),
+      rec.name .. ": terminal read must write nothing to its destination")
     return
   end
 
@@ -650,23 +670,50 @@ function TestConformanceCorpus()
   -- test-only hook the runner passes in) goes red on exactly the vectors that pin
   -- that rule. The hook disables the past-the-end refusal by padding the backing
   -- data and lifting the bit budget; a reader with that rule intact refuses those
-  -- vectors, so the sabotage must make them decode.
+  -- vectors, so the sabotage must make every isolating vector decode, while
+  -- refusals that pin a different rule must be unaffected.
   do
-    local red = 0
-    local pin = 0
+    local function sabotaged(rec)
+      local data = unhex(rec.bytes)
+      local rs = serialize.ReadStream.new(data)
+      rs._data = data .. ("\0"):rep(16)
+      rs._numBits = rs._numBits + 128
+      return rs
+    end
+
+    -- bits.txt's past-end vectors fail only because the width does not fit the
+    -- stream (there is no range rule on bits), so each one must decode once the
+    -- rule is switched off: full coverage of the pinning vectors.
+    local red, pin = 0, 0
     for _, rec in ipairs(parseVectors("conformance/bits.txt")) do
       if rec.expect == "refused" and rec.name:find("past%-end") then
         pin = pin + 1
-        local data = unhex(rec.bytes)
-        local rs = serialize.ReadStream.new(data)
-        rs._data = data .. ("\0"):rep(16)
-        rs._numBits = rs._numBits + 128
-        local ok = runSteps(rs, expandSteps(buildSteps(rec)), "read")
-        if ok then red = red + 1 end
+        if runSteps(sabotaged(rec), expandSteps(buildSteps(rec)), "read") then
+          red = red + 1
+        else
+          error("control 2: sabotage still refuses the pinning vector " .. rec.name, 0)
+        end
       end
     end
     check(pin > 0, "control 2: no past-the-end refusal vectors found")
-    check(red > 0, "control 2: the sabotaged reader must go red on the past-the-end vectors")
+    check(red == pin, "control 2: sabotage decoded " .. red .. " of " .. pin .. " pinning vectors")
+
+    -- Unrelated refusals: malformed padding, out-of-range ints, and malformed
+    -- strings/wstrings are refused for their own rules, so the same hook must
+    -- leave every one of them refused.
+    local unrelated, changed = 0, 0
+    for _, file in ipairs({ "align.txt", "int.txt", "string.txt", "wstring.txt" }) do
+      for _, rec in ipairs(parseVectors("conformance/" .. file)) do
+        if rec.expect == "refused" and not rec.name:find("past%-end") then
+          unrelated = unrelated + 1
+          if runSteps(sabotaged(rec), expandSteps(buildSteps(rec)), "read") then
+            changed = changed + 1
+          end
+        end
+      end
+    end
+    check(unrelated > 0, "control 2: no unrelated refusal vectors found")
+    check(changed == 0, "control 2: sabotage changed " .. changed .. " of " .. unrelated .. " unrelated refusals")
   end
 
   check(total > 0, "no conformance vectors ran")
