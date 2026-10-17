@@ -1,0 +1,12 @@
+== make fuzz ==
+    differential_test.go:536: ok  2000 programs, 455 mutated
+--- PASS: TestDifferentialAgainstSerializeGo (0.98s)
+PASS
+ok  	github.com/mas-bandwidth/serialize.lua/fuzz	0.996s
+== make test ==
+--- PASS TestSerializeStrings
+ok   make test
+== negative control (-widen-int) ==
+FAIL
+exit status 1
+FAIL	github.com/mas-bandwidth/serialize.lua/fuzz	0.986s
