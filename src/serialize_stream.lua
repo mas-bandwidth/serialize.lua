@@ -19,19 +19,29 @@
 
 local M = {}
 
--- The error kinds (DESIGN.md (a)): serialize.go's ErrOverflow,
--- ErrValueOutOfRange and ErrAlign, in serialize.js's spelling. A healthy
--- stream's error() is nil.
-local SerializeError = {
-  Overflow = "overflow",
+-- The refusal reasons (STANDARD.md, "Refusal reasons"): the closed list,
+-- spelled exactly as the standard spells them. A failed stream's error() is
+-- the FIRST refusal's reason; later refusals on that stream are its echoes and
+-- keep it. A healthy stream's error() is nil. The write side latches the same
+-- names where serialize.go's writer does: past_end for a write past the end of
+-- the buffer, value_out_of_range for a value outside its range, and
+-- non_finite_float for a float or double that is not finite.
+local Refusal = {
+  PastEnd = "past_end",
   ValueOutOfRange = "value_out_of_range",
-  Align = "align",
+  NonzeroPadding = "nonzero_padding",
+  TrailingData = "trailing_data",
+  NonFiniteFloat = "non_finite_float",
+  InvalidUtf8 = "invalid_utf8",
+  EmbeddedNul = "embedded_nul",
+  NonCanonical = "non_canonical",
 }
-M.SerializeError = SerializeError
+M.Refusal = Refusal
 
-local OVERFLOW = SerializeError.Overflow
-local VALUE_OUT_OF_RANGE = SerializeError.ValueOutOfRange
-local ALIGN = SerializeError.Align
+local PAST_END = Refusal.PastEnd
+local VALUE_OUT_OF_RANGE = Refusal.ValueOutOfRange
+local NONZERO_PADDING = Refusal.NonzeroPadding
+local TRAILING_DATA = Refusal.TrailingData
 
 -- API misuse raises, naming the rule, where serialize.go panics (DESIGN.md (g)).
 -- These messages are serialize.go's own panic strings.
@@ -245,7 +255,6 @@ local DISPATCH = {
   { "serializeCompressedFloatPrecomputed", "compressed_float", 1 },
   { "serializeBytes", "bytes", 1 },
   { "serializeString", "bytes", 1 },
-  { "serializeWideString", "bytes", 1 },
 }
 M.DISPATCH = DISPATCH
 
@@ -343,7 +352,7 @@ end
 function WriteStream:_writeBits(value, bits)
   if self._err ~= nil then return false end
   if mathtype(bits) ~= "integer" or bits < 1 or bits > 64 then error(PANIC_PRIMITIVE_BITS, 2) end
-  if self._bits + bits > self._numBits then return fail(self, OVERFLOW) end
+  if self._bits + bits > self._numBits then return fail(self, PAST_END) end
   local w = writer(self)
   if bits <= 32 then
     w:writeBits(value & ((1 << bits) - 1), bits)
@@ -363,7 +372,7 @@ function WriteStream:_writeBytes(s)
   local n = #s
   if n == 0 then return true end
   -- compared in bytes, as serialize.go does, so a huge count cannot wrap the test
-  if n > (self._numBits - self._bits) // 8 then return fail(self, OVERFLOW) end
+  if n > (self._numBits - self._bits) // 8 then return fail(self, PAST_END) end
   writer(self):writeBytes(s)
   self._bits = self._bits + n * 8
   return true
@@ -375,6 +384,12 @@ function WriteStream:serializeAlign()
   local n = (8 - self._bits % 8) % 8
   if n == 0 then return true end
   return self:_writeBits(0, n)
+end
+
+-- STANDARD.md, end: a writer's end emits nothing. It is still a call on the
+-- stream, so a failed stream answers false.
+function WriteStream:serializeEnd()
+  return self._err == nil
 end
 
 -- STANDARD.md, General Conventions, "Flush". Ends the write.
@@ -430,7 +445,7 @@ function ReadStream:_readBits(bits)
   if self._err ~= nil then return nil end
   if mathtype(bits) ~= "integer" or bits < 1 or bits > 64 then error(PANIC_PRIMITIVE_BITS, 2) end
   if self._bits + bits > self._numBits then
-    fail(self, OVERFLOW)
+    fail(self, PAST_END)
     return nil
   end
   local r = reader(self)
@@ -454,7 +469,7 @@ function ReadStream:_readBytes(n)
   -- compared in bytes, as serialize.go does (read_stream.go SerializeBytes), so a
   -- huge count cannot wrap the test
   if n > (self._numBits - self._bits) // 8 then
-    fail(self, OVERFLOW)
+    fail(self, PAST_END)
     return nil
   end
   local s = reader(self):readBytes(n)
@@ -462,14 +477,32 @@ function ReadStream:_readBytes(n)
   return s
 end
 
--- STANDARD.md, align: readers verify the padding is zero, else Align.
+-- STANDARD.md, align: readers verify the padding is zero, else nonzero_padding.
 function ReadStream:serializeAlign()
   if self._err ~= nil then return false end
   local n = (8 - self._bits % 8) % 8
   if n == 0 then return true end
   local v = self:_readBits(n)
   if v == nil then return false end
-  if v ~= 0 then return fail(self, ALIGN) end
+  if v ~= 0 then return fail(self, NONZERO_PADDING) end
+  return true
+end
+
+-- STANDARD.md, end: a packet reader reads its end after the last field of the
+-- top-level object. Order (STANDARD.md, end; Reader Obligations):
+--   1. a failed stream refuses with its first reason (the latch keeps it);
+--   2. a whole byte or more left over is trailing_data, whatever the padding
+--      holds, so `bits 3; end` over 0D 00 is trailing_data;
+--   3. otherwise the 0-7 bits left are the final byte's padding: any set bit
+--      is nonzero_padding. An accepted end leaves bitsProcessed() at 8 * bytes.
+function ReadStream:serializeEnd()
+  if self._err ~= nil then return false end
+  local remaining = self._numBits - self._bits
+  if remaining >= 8 then return fail(self, TRAILING_DATA) end
+  if remaining == 0 then return true end
+  local v = self:_readBits(remaining)
+  if v == nil then return false end
+  if v ~= 0 then return fail(self, NONZERO_PADDING) end
   return true
 end
 
@@ -500,6 +533,11 @@ end
 
 function MeasureStream:serializeAlign()
   return self:_measure(7)
+end
+
+-- STANDARD.md, end: a measure's end costs nothing.
+function MeasureStream:serializeEnd()
+  return self._err == nil
 end
 
 --------------------------------------------------------------------------------

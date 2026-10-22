@@ -1,128 +1,89 @@
 -- test/float: float and double, with float32 rounding (serialize-lua-float).
 -- Run by `make test T=float` from the repository root. Pins: every record of
--- conformance/float.txt and double.txt, comparing BIT PATTERNS (STANDARD.md,
--- "Bit transparency — both directions"): accepted records read and (when
--- canonical) write the exact bytes; refused records latch Overflow and leave
--- the holder untouched. fround pins Go's float32() conversion on a table of
--- edges computed by Go at `.ref/gen_fround_edges` (JOB.md). No real time, no
--- sockets, no network: io only reads the two conformance files.
+-- conformance/float.txt and double.txt through the shared runner, comparing BIT
+-- PATTERNS (STANDARD.md, "Finite values only, every one bit exact"): accepted
+-- records read and (when canonical) write the exact bytes; non-finite patterns
+-- are refused as non_finite_float with the holder untouched. The writer and the
+-- measure refuse a non-finite value, tested after the float32 narrowing. fround
+-- pins Go's float32() conversion on a table of edges computed by Go at
+-- `.ref/gen_fround_edges` (JOB.md). No real time, no sockets, no network: io
+-- only reads the conformance files.
 
 local serialize = require("serialize")
 local flt = require("serialize_float")
+local C = assert(loadfile("test/conformance/conformance_test.lua"))()
 
 local function check(cond, msg)
   if not cond then error(msg, 2) end
 end
 
--- ---------------------------------------------------------------------------
--- conformance vector parsing (STANDARD.md, "The vector format")
--- ---------------------------------------------------------------------------
+local NON_FINITE = serialize.Refusal.NonFiniteFloat
 
-local function parseVectors(path)
-  local f = assert(io.open(path, "r"))
-  local text = f:read("a")
-  f:close()
-  local records = {}
-  local rec
-  for line in text:gmatch("[^\n]+") do
-    if not line:match("^#") then
-      if line:match("^%s*$") then
-        rec = nil
-      else
-        local op = line:match("^operation%s+(%S+)")
-        if op then
-          rec = { operation = op }
-          records[#records + 1] = rec
-        elseif rec then
-          local key, value = line:match("^(%S+)%s*(.*)$")
-          rec[key] = value
-        end
-      end
-    end
-  end
-  return records
+local function fromDoubleBits(bits)
+  return (string.unpack("<d", string.pack("<i8", bits)))
 end
 
-local function unhex(s)
-  if s == nil or s == "" then return "" end
-  local out = {}
-  for byte in s:gmatch("%x%x") do
-    out[#out + 1] = string.char(tonumber(byte, 16))
-  end
-  return table.concat(out)
+-- writeRefused(method, value): the writer and the measure latch
+-- non_finite_float, write nothing and count nothing.
+local function writeRefused(method, value, what)
+  local ws = serialize.WriteStream.new(8)
+  local h = { value = value }
+  check(ws[method](ws, h) == false, what .. ": the write must refuse")
+  check(ws:error() == NON_FINITE, what .. ": the write latched " .. tostring(ws:error()))
+  check(ws:bitsProcessed() == 0, what .. ": the refused write wrote bits")
+  check(rawequal(h.value, value) or (h.value ~= h.value and value ~= value), what .. ": the holder changed")
+  local ms = serialize.MeasureStream.new()
+  check(ms[method](ms, { value = value }) == false, what .. ": the measure must refuse")
+  check(ms:error() == NON_FINITE, what .. ": the measure latched " .. tostring(ms:error()))
 end
 
--- hex (without 0x), up to 16 digits, as an int64 (wraps past 2^63)
-local function parseBits(hex)
-  local digits = #hex
-  local loHex = hex:sub(math.max(1, digits - 7), digits)
-  local hiHex = hex:sub(1, math.max(0, digits - 8))
-  local lo = tonumber(loHex, 16) or 0
-  local hi = (hiHex ~= "") and tonumber(hiHex, 16) or 0
-  return (hi << 32) | lo
+local function writeAccepted(method, value, what)
+  local ws = serialize.WriteStream.new(8)
+  check(ws[method](ws, { value = value }) == true, what .. ": the write must accept, got " .. tostring(ws:error()))
+  local ms = serialize.MeasureStream.new()
+  check(ms[method](ms, { value = value }) == true, what .. ": the measure must accept")
 end
-
-local function dbits(v)
-  return string.unpack("<i8", string.pack("<d", v))
-end
-
--- ---------------------------------------------------------------------------
--- the conformance run
--- ---------------------------------------------------------------------------
-
-local SPECS = {
-  { "float", "conformance/float.txt", "serializeFloat" },
-  { "double", "conformance/double.txt", "serializeDouble" },
-}
 
 function TestSerializeFloat()
-  local total = 0
-  for _, spec in ipairs(SPECS) do
-    local op, path, methodName = spec[1], spec[2], spec[3]
-    local records = parseVectors(path)
-    check(#records == 18, op .. ": expected 18 records, parsed " .. #records)
-    print(op .. ".txt: " .. #records .. " records")
-    for _, rec in ipairs(records) do
-      check(rec.operation == "float" or rec.operation == "double", op .. ": bad operation " .. tostring(rec.operation))
-      local bytes = unhex(rec.bytes)
-      if rec.expect == "refused" then
-        local rs = serialize.ReadStream.new(bytes)
-        local holder = { value = nil }
-        check(rs[methodName](rs, holder) == false, op .. ": " .. rec.name .. " must refuse")
-        check(rs:error() == serialize.SerializeError.Overflow, op .. ": " .. rec.name .. " latches Overflow")
-        check(holder.value == nil, op .. ": " .. rec.name .. " leaves the holder untouched")
-      else
-        local expectHex = assert(rec.expect:match("bits = 0x([0-9a-fA-F]+)"), op .. ": " .. rec.name .. " expect bits")
-        local want = parseBits(expectHex)
-        local wantConsumed = tonumber(rec.consumed) or 0
-        -- read
-        local rs = serialize.ReadStream.new(bytes)
-        local holder = { value = nil }
-        check(rs[methodName](rs, holder) == true, op .. ": " .. rec.name .. " read failed")
-        check(rs:bitsProcessed() == wantConsumed, op .. ": " .. rec.name .. " consumed " .. rs:bitsProcessed() .. " want " .. wantConsumed)
-        if op == "float" then
-          check(flt.float32Bits(holder.value) == want, op .. ": " .. rec.name .. " read bits")
-        else
-          check(dbits(holder.value) == want, op .. ": " .. rec.name .. " read bits")
-        end
-        total = total + 1
-        -- canonical write reproduces the bytes
-        if rec.writer == "canonical" then
-          local value
-          if op == "float" then
-            value = flt.float32FromBits(want)
-          else
-            value = string.unpack("<d", string.pack("<i8", want))
-          end
-          local ws = serialize.WriteStream.new(math.max(8, #bytes))
-          check(ws[methodName](ws, { value = value }) == true, op .. ": " .. rec.name .. " write failed")
-          ws:flush()
-          check(ws:data() == bytes, op .. ": " .. rec.name .. " write bytes")
-        end
-      end
-    end
+  local counts = { ["conformance/float.txt"] = 22, ["conformance/double.txt"] = 22 }
+  for path, n in pairs(counts) do
+    local records = C.parseVectors(path)
+    check(#records == n, path .. ": expected " .. n .. " records, parsed " .. #records)
+    for _, rec in ipairs(records) do C.runRecord(rec) end
+    print(path .. ": " .. #records .. " records")
   end
-  check(total > 0, "no accepted float/double record was exercised")
+
+  -- the writer is handed finite values only (STANDARD.md, "Finite values
+  -- only"): NaN, signaling NaN and both infinities refused on write and measure
+  local inf, nan = math.huge, 0.0 / 0.0
+  for _, v in ipairs({ inf, -inf, nan, -nan, fromDoubleBits(0x7FF0000000000001) }) do
+    writeRefused("serializeFloat", v, "float " .. tostring(v))
+    writeRefused("serializeDouble", v, "double " .. tostring(v))
+  end
+  -- the float test is on the bits AFTER the narrowing: a finite double above
+  -- FLT_MAX narrows to an infinity, which is what would be sent. Reversed
+  -- witness: the same value is finite as a double, so a check on the caller's
+  -- double would pass it.
+  local aboveFltMax = fromDoubleBits(0x47EFFFFFF0000000) -- rounds to +inf in float32
+  check(aboveFltMax == aboveFltMax and aboveFltMax ~= inf, "the witness is a finite double")
+  writeRefused("serializeFloat", aboveFltMax, "float above FLT_MAX")
+  writeRefused("serializeFloat", -aboveFltMax, "float below -FLT_MAX")
+  writeAccepted("serializeDouble", aboveFltMax, "the same value as a double")
+  -- just inside: FLT_MAX itself, and a double that rounds down onto it
+  writeAccepted("serializeFloat", fromDoubleBits(0x47EFFFFFE0000000), "FLT_MAX")
+  writeAccepted("serializeFloat", fromDoubleBits(0x47EFFFFFE8000000), "a double that rounds to FLT_MAX")
+  -- negative zero and the smallest subnormals are finite
+  writeAccepted("serializeFloat", -0.0, "float -0")
+  writeAccepted("serializeDouble", -0.0, "double -0")
+  writeAccepted("serializeDouble", fromDoubleBits(1), "double smallest subnormal")
+
+  -- a failed stream keeps its first reason: a past_end read, then a
+  -- non-finite pattern, still reports past_end
+  local rs = serialize.ReadStream.new("\0\0\128\127")
+  check(rs:serializeDouble({ value = 0.0 }) == false and rs:error() == serialize.Refusal.PastEnd,
+    "a 64-bit read of four bytes is past_end")
+  check(rs:serializeFloat({ value = 0.0 }) == false and rs:error() == serialize.Refusal.PastEnd,
+    "the echo keeps the first reason")
 
   -- -------------------------------------------------------------------------
   -- fround: Go's float32() on a table of edges computed at .ref (JOB.md).
@@ -145,8 +106,6 @@ function TestSerializeFloat()
     { 0x8000000000000000, 0x80000000 },
     { 0x7FF0000000000000, 0x7F800000 },
     { 0xFFF0000000000000, 0xFF800000 },
-    { 0x7FF8000000000001, 0x7FC00000 },
-    { 0x7FF4000000000001, 0x7FE00000 },
     { 0x6CA3344B5669E91A, 0x7F800000 },
     { 0x5292E65FF01ACD3E, 0x7F800000 },
     { 0xDE7D997018E76D3D, 0xFF800000 },
@@ -226,5 +185,14 @@ function TestSerializeFloat()
     check(got == want,
       "fround(" .. string.format("%016X", inbits) .. ") = " ..
       string.format("%08X", got) .. ", Go float32() = " .. string.format("%08X", want))
+  end
+
+  -- NaN narrows to a NaN pattern (exponent all ones, mantissa set), which the
+  -- writer refuses; its payload no longer matters, since the format carries
+  -- finite values only.
+  for _, bits in ipairs({ 0x7FF8000000000001, 0x7FF4000000000001, -1 }) do
+    local got = flt.float32Bits(fromDoubleBits(bits))
+    check((got & 0x7F800000) == 0x7F800000 and (got & 0x7FFFFF) ~= 0,
+      string.format("NaN %016X narrows to a NaN pattern, got %08X", bits, got))
   end
 end

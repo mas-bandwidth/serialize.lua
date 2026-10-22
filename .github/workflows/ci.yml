@@ -40,11 +40,11 @@ jobs:
         run: make check-ci
 
   corpus:
-    name: STANDARD.md and conformance/ match mas-bandwidth/serialize
+    name: STANDARD.md, IMPLEMENTING.md, conformance/ and conformance-controls/ match mas-bandwidth/serialize
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64, fleet, serialize]
     env:
-      SERIALIZE_TAG: v1.17.0
+      SERIALIZE_TAG: v2.0.0
     steps:
       - uses: actions/checkout@v4
 
@@ -54,5 +54,10 @@ jobs:
       - name: conformance/ matches the pinned release
         run: diff -ru "$RUNNER_TEMP/serialize"/conformance conformance
 
-      - name: STANDARD.md matches the pinned release
-        run: diff -ru "$RUNNER_TEMP/serialize"/STANDARD.md STANDARD.md
+      - name: conformance-controls/ matches the pinned release
+        run: diff -ru "$RUNNER_TEMP/serialize"/conformance-controls conformance-controls
+
+      - name: STANDARD.md and IMPLEMENTING.md match the pinned release
+        run: |
+          diff -u "$RUNNER_TEMP/serialize"/STANDARD.md STANDARD.md
+          diff -u "$RUNNER_TEMP/serialize"/IMPLEMENTING.md IMPLEMENTING.md

@@ -8,7 +8,9 @@
 -- TestCompressedFloatValidation's misuse rules: a read of an integer above
 -- maxIntegerValue, a huge delta / resolution ratio that must not overflow the
 -- uint32 quantization range, and a non-finite value, which the checked writer
--- asserts on (STANDARD.md, "Non-finite inputs are non-conforming").
+-- asserts on; and the format 2.0 finite decode (STANDARD.md, "The decode must
+-- be finite"): the writer raises on a declaration whose top decode is not
+-- finite, and the reader refuses a non-finite decode as non_finite_float.
 
 local serialize = require("serialize")
 
@@ -16,113 +18,25 @@ local function check(cond, msg)
   if not cond then error(msg, 2) end
 end
 
-local function hexToBinary(s)
-  local t = {}
-  for pair in s:gmatch("%x%x") do
-    t[#t + 1] = string.char(tonumber(pair, 16))
-  end
-  return table.concat(t)
-end
-
--- float32Bits(x): the 32-bit pattern of a double that is exactly a float32.
-local function float32Bits(x)
-  return select(1, string.unpack("<I4", string.pack("<f", x)))
-end
-
 --------------------------------------------------------------------------------
--- Conformance vector parsing.
+-- The corpus records run through the shared runner (test/conformance): the
+-- decoded float32 bits, bits consumed, the stated refusal reason (a non-finite
+-- decode is non_finite_float), the destination untouched, the stream terminal,
+-- and the writer_input bytes.
 --------------------------------------------------------------------------------
 
-local function parseVectors(path)
-  local f = assert(io.open(path, "r"))
-  local content = f:read("a")
-  f:close()
-  local records = {}
-  local cur
-  for line in content:gmatch("[^\n]+") do
-    local stripped = line:gsub("^%s+", "")
-    if stripped:sub(1, 1) ~= "#" and stripped ~= "" then
-      local op = stripped:match("^operation%s+(%S+)")
-      if op then
-        cur = { operation = op, params = {}, bytes = "", expect = nil, consumed = nil }
-        records[#records + 1] = cur
-      else
-        local nm = stripped:match("^name%s+(%S+)$")
-        if nm then
-          cur.name = nm
-        else
-          local pname, pval = stripped:match("^param%s+(%S+)%s*=%s*(.+)")
-          if pname then
-            cur.params[pname] = pval
-          else
-            local b = stripped:match("^bytes%s*(.*)$")
-            if b ~= nil then
-              cur.bytes = b
-            else
-              local ex = stripped:match("^expect%s+(.+)$")
-              if ex then
-                if ex == "refused" then
-                  cur.expect = "refused"
-                else
-                  local bits = ex:match("^bits%s*=%s*(.+)$")
-                  if bits then cur.expect = tonumber(bits) end
-                end
-              else
-                local c = stripped:match("^consumed%s+(%d+)")
-                if c then cur.consumed = tonumber(c) end
-              end
-            end
-          end
-        end
-      end
-    end
-  end
-  return records
-end
-
-local function runRecord(rec)
-  local min = tonumber(rec.params.min)
-  local max = tonumber(rec.params.max)
-  local res = tonumber(rec.params.res)
-  local data = hexToBinary(rec.bytes)
-
-  local refused = (rec.expect == "refused")
-  local expectedBits = rec.expect
-  local sentinel = -12345.0
-
-  local rs = serialize.ReadStream.new(data)
-  local holder = { value = sentinel }
-  if refused then
-    local ok = rs:serializeCompressedFloat(holder, min, max, res)
-    check(ok == false, "refused read must fail: " .. rec.name)
-    check(holder.value == sentinel, "refused read must leave destination untouched: " .. rec.name)
-    local before = rs:bitsProcessed()
-    local h2 = { value = sentinel }
-    check(rs:serializeCompressedFloat(h2, min, max, res) == false
-      and h2.value == sentinel and rs:bitsProcessed() == before,
-      "refused read must leave the stream terminal: " .. rec.name)
-  else
-    check(rs:serializeCompressedFloat(holder, min, max, res),
-      "accepted read failed: " .. rec.name .. " err=" .. tostring(rs:error()))
-    check(float32Bits(holder.value) == expectedBits, "wrong decoded bits in " .. rec.name
-      .. string.format(": got 0x%08X want 0x%08X", float32Bits(holder.value), expectedBits))
-    check(rs:bitsProcessed() == rec.consumed, "wrong consumed in " .. rec.name)
-  end
-end
+local C = assert(loadfile("test/conformance/conformance_test.lua"))()
 
 local function runFile(path)
-  local records = parseVectors(path)
-  local f = assert(io.open(path, "r"))
-  local opCount = 0
-  for line in f:lines() do
-    if line:match("^operation%s+") then opCount = opCount + 1 end
-  end
-  f:close()
-  check(#records == opCount, path .. ": parsed " .. #records .. " records, file declares " .. opCount)
-  for _, rec in ipairs(records) do
-    runRecord(rec)
-  end
+  local records = C.parseVectors(path)
+  for _, rec in ipairs(records) do C.runRecord(rec) end
   print(path .. ": " .. #records .. " records")
+end
+
+local function raisesDecode(fn, what)
+  local ok, err = pcall(fn)
+  check(not ok and tostring(err):find("top decode", 1, true) ~= nil,
+    what .. ": the writer must raise on the declaration, got " .. tostring(err))
 end
 
 local function clampWitness(maxv)
@@ -171,7 +85,50 @@ function TestSerializeCompressedFloat()
     local rs = serialize.ReadStream.new(ws:data())
     local h = { value = -1.0 }
     check(rs:serializeCompressedFloat(h, 0, 10, 0.01) == false, "above-maxIntegerValue read must refuse")
+    check(rs:error() == serialize.Refusal.ValueOutOfRange, "above-maxIntegerValue is value_out_of_range")
     check(h.value == -1.0, "above-maxIntegerValue refused read must leave destination untouched")
+  end
+
+  -- 4. STANDARD.md, "The decode must be finite": over [3*2^103, FLT_MAX] at
+  -- resolution 2^104 the top integer decodes to +inf. The declaration is
+  -- non-conforming as a whole, so the WRITER raises on it even for a value
+  -- that decodes finite (min itself), through both entry points; the measure
+  -- and the reader do not raise, and the reader refuses the top integer as
+  -- non_finite_float.
+  do
+    local min, max, res = 3.0 * 2.0 ^ 103, 340282346638528859811704183484516925440.0, 2.0 ^ 104
+    raisesDecode(function()
+      serialize.WriteStream.new(8):serializeCompressedFloat({ value = min }, min, max, res)
+    end, "derived")
+    local maxInt, bits, delta = serialize.compressedFloatParams(min, max, res)
+    raisesDecode(function()
+      serialize.WriteStream.new(8):serializeCompressedFloatPrecomputed({ value = min }, maxInt, bits, delta, min)
+    end, "precomputed")
+    local ms = serialize.MeasureStream.new()
+    check(ms:serializeCompressedFloat({ value = min }, min, max, res), "the measure does not raise")
+    -- the top integer, read: non_finite_float, destination untouched
+    local ws = serialize.WriteStream.new(8)
+    check(ws:serializeBits({ value = maxInt }, bits))
+    ws:flush()
+    local rs = serialize.ReadStream.new(ws:data())
+    local h = { value = -1.0 }
+    check(rs:serializeCompressedFloat(h, min, max, res) == false
+      and rs:error() == serialize.Refusal.NonFiniteFloat and h.value == -1.0,
+      "the top integer's decode is refused as non_finite_float, got " .. tostring(rs:error()))
+    -- reversed witness: one below the top decodes finite and is accepted
+    local ws2 = serialize.WriteStream.new(8)
+    check(ws2:serializeBits({ value = maxInt - 1 }, bits))
+    ws2:flush()
+    local rs2 = serialize.ReadStream.new(ws2:data())
+    check(rs2:serializeCompressedFloat(h, min, max, res) and h.value < math.huge,
+      "the integer below the top decodes finite")
+    -- a delta past FLT_MAX is the same misdeclaration
+    raisesDecode(function()
+      serialize.WriteStream.new(8):serializeCompressedFloat({ value = 0.0 }, -max, max, 1.0)
+    end, "delta past FLT_MAX")
+    -- a conforming declaration's write is untouched by the assert
+    check(serialize.WriteStream.new(8):serializeCompressedFloat({ value = 5.0 }, 0.0, 10.0, 0.01),
+      "a conforming declaration writes")
   end
 
   -- huge delta / resolution ratios must not overflow the uint32 quantization range.
@@ -188,7 +145,7 @@ function TestSerializeCompressedFloat()
   end
 
   -- a non-finite value is non-conforming and the checked writer asserts
-  -- (raises) on it (STANDARD.md, "Non-finite inputs are non-conforming").
+  -- (raises) on it (IMPLEMENTING.md, "The check model").
   do
     local ws = serialize.WriteStream.new(8)
     local ok, err = pcall(function()

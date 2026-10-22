@@ -1,7 +1,10 @@
 // Package fuzz tests the Lua serialize port differentially against serialize.go:
 // for every generated program the two writers must emit identical bytes, each
 // side must read the other's bytes back to the program's values, and on mutation
-// the readers must agree on whether, where and with what values they stop.
+// the readers must agree on whether, where, for what reason and with what values
+// they stop. Every program ends with serialize_end, as a packet reader must
+// (STANDARD.md, end), so a mutation that leaves a byte over or sets a padding
+// bit is refused by both readers, for the same reason.
 package fuzz
 
 import (
@@ -17,9 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
-	"github.com/mas-bandwidth/serialize.go"
+	"github.com/mas-bandwidth/serialize.go/v2"
 )
 
 // widenIntRange, when set via -widen-int, makes the Go writer use int ranges one
@@ -100,10 +102,12 @@ func (o op) emitLua() string {
 			math.Float32bits(o.valF32), o.cfMin, o.cfMax, o.cfRes)
 	case "bytes":
 		return fmt.Sprintf("bytes %s %d", hexOrDot(o.payload), len(o.payload))
-	case "str", "wstr":
+	case "str":
 		return fmt.Sprintf("%s %s %d", o.kind, hexOrDot(o.payload), o.bufSize)
 	case "align":
 		return "align"
+	case "end":
+		return "end"
 	case "object":
 		if o.objB {
 			return fmt.Sprintf("object %d 1", o.objU)
@@ -209,11 +213,10 @@ func (o *op) write(w *serialize.WriteStream) {
 	case "str":
 		v := string(o.payload)
 		w.SerializeString(&v, o.bufSize)
-	case "wstr":
-		v := string(o.payload)
-		w.SerializeWideString(&v, o.bufSize)
 	case "align":
 		w.SerializeAlign()
+	case "end":
+		w.SerializeEnd()
 	case "object":
 		w.SerializeObject(&fuzzObject{u: o.objU, b: o.objB})
 	}
@@ -343,14 +346,13 @@ func (o op) read(r *serialize.ReadStream) (bool, string) {
 			return false, ""
 		}
 		return true, hexOrDot([]byte(v))
-	case "wstr":
-		var v string
-		if r.SerializeWideString(&v, o.bufSize) != nil {
-			return false, ""
-		}
-		return true, hexOrDot([]byte(v))
 	case "align":
 		if r.SerializeAlign() != nil {
+			return false, ""
+		}
+		return true, "-"
+	case "end":
+		if r.SerializeEnd() != nil {
 			return false, ""
 		}
 		return true, "-"
@@ -439,7 +441,7 @@ func randInt128() serialize.Int128 {
 
 func randOp() op {
 	var o op
-	switch rng.IntN(22) {
+	switch rng.IntN(21) {
 	case 0: // bits
 		o.kind = "bits"
 		o.width = int(randRange(1, 32))
@@ -588,30 +590,30 @@ func randOp() op {
 			o.prev = int32(randRange(0, math.MaxInt32-1))
 			o.valI = randRange(int64(o.prev)+1, math.MaxInt32)
 		}
-	case 14: // float32, every bit pattern including NaN payloads
+	case 14: // float32: finite patterns only (format 2.0), the edges included
 		o.kind = "float"
 		bits := randU32()
 		switch rng.IntN(8) {
-		case 0: // a NaN: exponent all ones, nonzero payload
-			bits = (bits & 0x80000000) | 0x7f800000 | (bits & 0x7fffff)
-			if bits&0x7fffff == 0 {
-				bits |= 1
-			}
-		case 1: // infinity
-			bits = (bits & 0x80000000) | 0x7f800000
+		case 0: // a subnormal or a signed zero
+			bits &= 0x807fffff
+		case 1: // the top binade, up to FLT_MAX
+			bits = (bits & 0x807fffff) | 0x7f000000
+		}
+		if bits&0x7f800000 == 0x7f800000 {
+			bits &^= 0x00800000 // never NaN or an infinity: the writer refuses them
 		}
 		o.valF32 = math.Float32frombits(bits)
-	case 15: // double, every bit pattern including NaN payloads
+	case 15: // double: finite patterns only (format 2.0), the edges included
 		o.kind = "double"
 		bits := randU64()
 		switch rng.IntN(8) {
-		case 0: // a NaN: exponent all ones, nonzero payload
-			bits = (bits & 0x8000000000000000) | 0x7ff0000000000000 | (bits & 0xfffffffffffff)
-			if bits&0xfffffffffffff == 0 {
-				bits |= 1
-			}
-		case 1: // infinity
-			bits = (bits & 0x8000000000000000) | 0x7ff0000000000000
+		case 0: // a subnormal or a signed zero
+			bits &= 0x800fffffffffffff
+		case 1: // the top binade, up to the largest finite double
+			bits = (bits & 0x800fffffffffffff) | 0x7fe0000000000000
+		}
+		if bits&0x7ff0000000000000 == 0x7ff0000000000000 {
+			bits &^= 0x0010000000000000
 		}
 		o.valF64 = math.Float64frombits(bits)
 	case 16: // compressed float32, exactly representable integers at resolution 1
@@ -637,19 +639,7 @@ func randOp() op {
 		for i := range o.payload {
 			o.payload[i] = byte(randRange(1, 0x7f))
 		}
-	case 19: // wide string (UTF-16 code units); BMP non-NUL runes
-		o.kind = "wstr"
-		o.bufSize = int(randRange(1, 128))
-		n := int(randRange(0, int64(o.bufSize)-1))
-		o.payload = make([]byte, 0)
-		for i := 0; i < n; i++ {
-			r := rune(randRange(1, 0xffff))
-			if r >= 0xd800 && r <= 0xdfff {
-				r = 'x'
-			}
-			o.payload = utf8.AppendRune(o.payload, r)
-		}
-	case 20: // align
+	case 19: // align
 		o.kind = "align"
 	default: // object
 		o.kind = "object"
@@ -665,6 +655,8 @@ func genProgram() program {
 	for i := 0; i < n; i++ {
 		p.ops = append(p.ops, randOp())
 	}
+	// a packet is one object and its end (STANDARD.md, end)
+	p.ops = append(p.ops, op{kind: "end"})
 	return p
 }
 
@@ -735,6 +727,7 @@ func parseWriteLine(t *testing.T, line string) []byte {
 
 type readResult struct {
 	n      int
+	reason string // the first refusal's reason as STANDARD.md spells it, "ok" if none
 	tokens []string
 }
 
@@ -750,11 +743,14 @@ func parseReadLine(t *testing.T, line string) readResult {
 	if err != nil {
 		t.Fatalf("bad READ count in %q: %v", line, err)
 	}
-	tokens := fields[2:]
+	if len(fields) < 3 {
+		t.Fatalf("READ line %q carries no reason", line)
+	}
+	tokens := fields[3:]
 	if len(tokens) != n {
 		t.Fatalf("READ line %q reports %d but carries %d tokens", line, n, len(tokens))
 	}
-	return readResult{n: n, tokens: tokens}
+	return readResult{n: n, reason: fields[2], tokens: tokens}
 }
 
 func mutateBytes(b []byte) []byte {
@@ -792,6 +788,14 @@ func readGo(p program, data []byte) readResult {
 		res.tokens = append(res.tokens, tok)
 	}
 	res.n = len(res.tokens)
+	res.reason = "ok"
+	if err := r.Err(); err != nil {
+		refusal, isRefusal := err.(serialize.Refusal)
+		if !isRefusal {
+			panic(fmt.Sprintf("go reader latched a non-refusal error %v", err))
+		}
+		res.reason = refusal.String()
+	}
 	return res
 }
 
@@ -828,9 +832,9 @@ func expectedToken(o op) string {
 		return fmt.Sprintf("%08x", math.Float32bits(o.valF32))
 	case "double":
 		return fmt.Sprintf("%016x", math.Float64bits(o.valF64))
-	case "bytes", "str", "wstr":
+	case "bytes", "str":
 		return hexOrDot(o.payload)
-	case "align":
+	case "align", "end":
 		return "-"
 	case "object":
 		return fmt.Sprintf("%d,%d", o.objU, boolDigit(o.objB))
@@ -891,7 +895,7 @@ func TestDifferentialAgainstSerializeGo(t *testing.T) {
 	for _, kind := range []string{
 		"bits", "bits64", "bool", "u8", "u16", "u32", "u64", "u128",
 		"int", "int64", "i128", "fixed64", "fixed128", "intrel",
-		"float", "double", "cfloat", "bytes", "str", "wstr", "align", "object",
+		"float", "double", "cfloat", "bytes", "str", "align", "object", "end",
 	} {
 		if !seen[kind] {
 			t.Fatalf("generated programs never exercise %s", kind)
@@ -998,7 +1002,7 @@ func TestDifferentialAgainstSerializeGo(t *testing.T) {
 	}
 
 	// (3) mutation agreement: both readers agree on accept/refuse, on the index
-	// of the first refusal, and on every value decoded before it.
+	// of the first refusal, on its reason, and on every value decoded before it.
 	for i := 0; i < n; i++ {
 		if mutated[i] == nil {
 			continue
@@ -1008,6 +1012,10 @@ func TestDifferentialAgainstSerializeGo(t *testing.T) {
 		if goRes.n != luaRes.n {
 			t.Fatalf("program %d: mutation disagreement at step %d\nmutated from %x to %x\nprogram:\n%s",
 				i, firstDiffInts(goRes.n, luaRes.n), goBytes[i], mutated[i], dumpProgram(programs[i]))
+		}
+		if goRes.reason != luaRes.reason {
+			t.Fatalf("program %d: mutation reason disagreement: go %s, lua %s\nmutated from %x to %x\nprogram:\n%s",
+				i, goRes.reason, luaRes.reason, goBytes[i], mutated[i], dumpProgram(programs[i]))
 		}
 		if !equalStrings(goRes.tokens, luaRes.tokens) {
 			t.Fatalf("program %d: mutation value disagreement at step %d\ngo:  %q\nlua: %q\nmutated from %x to %x\nprogram:\n%s",

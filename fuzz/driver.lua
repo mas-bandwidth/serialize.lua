@@ -1,7 +1,9 @@
 -- fuzz/driver.lua: the Lua half of the differential. Reads a batch file given
 -- as arg[1] (the path) and writes one result line per program to stdout:
 --   HEX <lowercase hex bytes>       a written packet
---   READ <n> <token>...             a read: n ops accepted, then their values
+--   READ <n> <reason> <token>...    a read: n ops accepted, the first refusal's
+--                                   reason (STANDARD.md spelling, "ok" if none),
+--                                   then the accepted ops' values
 -- A program is a sequence of lines:
 --   W <capacity>      start a write program; capacity in bytes (multiple of 8)
 --   R <hex>           start a read program over those bytes
@@ -9,8 +11,8 @@
 --   END               finish: flush a write, or report a read
 -- Values cross the process boundary as integers or hex strings, never as
 -- float-vs-integer ambiguity. The writer is strict, and a read latches the
--- first refusal and reports how many ops decoded before it (READ <n>), so the
--- Go side can compare accept/refuse and every decoded value.
+-- first refusal and reports how many ops decoded before it and its reason, so
+-- the Go side can compare accept/refuse, the reason and every decoded value.
 package.path = "./src/?.lua"
 
 local serialize = require("serialize")
@@ -116,12 +118,11 @@ local function op_str(args)
   local h = { value = fromhex(args[1]) }
   return s:serializeString(h, tonumber(args[2])), h
 end
-local function op_wstr(args)
-  local h = { value = fromhex(args[1]) }
-  return s:serializeWideString(h, tonumber(args[2])), h
-end
 local function op_align()
   return s:serializeAlign(), nil
+end
+local function op_end()
+  return s:serializeEnd(), nil
 end
 local function op_object(args)
   local obj = { u = tonumber(args[1]), b = tonumber(args[2]) == 1 }
@@ -144,8 +145,8 @@ local OPS = {
   int = op_int, int64 = op_int64, u128 = op_u128, i128 = op_i128,
   fixed64 = op_fixed64, fixed128 = op_fixed128,
   float = op_float, double = op_double, cfloat = op_cfloat,
-  bytes = op_bytes, str = op_str, wstr = op_wstr,
-  align = op_align, intrel = op_intrel, object = op_object,
+  bytes = op_bytes, str = op_str,
+  align = op_align, ["end"] = op_end, intrel = op_intrel, object = op_object,
 }
 
 local function token(kind, v)
@@ -155,7 +156,7 @@ local function token(kind, v)
     return string.format("%08x", float32Bits(v))
   elseif kind == "double" then
     return string.format("%016x", string.unpack("<i8", string.pack("<d", v)))
-  elseif kind == "bytes" or kind == "str" or kind == "wstr" then
+  elseif kind == "bytes" or kind == "str" then
     local h = hex(v)
     if h == "" then return "." end
     return h
@@ -188,7 +189,7 @@ for line in (blk .. "\n"):gmatch("([^\r\n]+)\r?\n") do
       s:flush()
       io.write("HEX " .. hex(s:data()) .. "\n")
     else
-      local parts = { "READ", string.format("%d", accept) }
+      local parts = { "READ", string.format("%d", accept), s:error() or "ok" }
       for _, t in ipairs(ops) do parts[#parts + 1] = t end
       io.write(table.concat(parts, " ") .. "\n")
     end

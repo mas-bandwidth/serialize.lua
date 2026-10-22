@@ -8,7 +8,7 @@
 
     A bitpacking serializer, wire compatible with the C++ serialize library and
     serialize.go: the same values produce the same bytes. The wire format is
-    STANDARD.md (vendored verbatim), format version 1.1. DESIGN.md is the
+    STANDARD.md (vendored verbatim), format version 2.0. DESIGN.md is the
     design; its section (a) lists every name this table carries.
 
         local serialize = require("serialize")
@@ -24,8 +24,8 @@ local lazy = stream.lazy
 
 local M = {}
 
--- The error kinds latched on a stream (DESIGN.md (a)).
-M.SerializeError = stream.SerializeError
+-- The refusal reasons a stream latches (STANDARD.md, "Refusal reasons").
+M.Refusal = stream.Refusal
 
 -- The three streams (DESIGN.md (a), (g)): serialize_stream.lua.
 M.WriteStream = stream.WriteStream
