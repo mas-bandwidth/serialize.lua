@@ -129,11 +129,11 @@ function TestSmoke()
   check(rs:ok() and rs:error() == nil, "a new ReadStream is healthy")
   local holder = { value = 42 }
   check(probe.read(rs, holder, 1) == false, "reading 1 bit of empty data fails")
-  check(rs:error() == serialize.SerializeError.Overflow, "the failure latches Overflow, got " .. tostring(rs:error()))
+  check(rs:error() == serialize.Refusal.PastEnd, "the failure latches past_end, got " .. tostring(rs:error()))
   check(holder.value == 42, "a refused read leaves its holder unchanged")
   check(rs:bitsProcessed() == 0, "a refused read consumes nothing")
-  rs:_fail(serialize.SerializeError.Align)
-  check(rs:error() == serialize.SerializeError.Overflow, "the first error sticks")
+  rs:_fail(serialize.Refusal.NonzeroPadding)
+  check(rs:error() == serialize.Refusal.PastEnd, "the first error sticks")
   check(probe.read(rs, holder, 1) == false and holder.value == 42, "a later call fails and leaves its holder unchanged")
   check(rs:serializeAlign() == false, "align on an aligned but failed stream refuses")
   local called = false
@@ -141,18 +141,18 @@ function TestSmoke()
   check(rs:serializeObject(object) == false and not called, "object refuses on a failed stream without calling it")
   check(rs:bitsProcessed() == 0 and rs:bytesProcessed() == 0, "a failed stream consumed nothing")
   check(rs:_readBits(1) == nil, "the read primitive refuses on a failed stream")
-  -- a byte count too large to multiply by 8 still refuses as Overflow (the bounds
+  -- a byte count too large to multiply by 8 still refuses as past_end (the bounds
   -- test is made in bytes, as serialize.go makes it) rather than wrapping
   local brs = serialize.ReadStream.new("")
-  check(brs:_readBytes(1 << 61) == nil and brs:error() == serialize.SerializeError.Overflow,
-    "a huge byte count latches Overflow")
+  check(brs:_readBytes(1 << 61) == nil and brs:error() == serialize.Refusal.PastEnd,
+    "a huge byte count latches past_end")
   rs:reset("")
   check(rs:ok(), "reset clears the latch")
 
-  -- the write side: a write past the end latches Overflow and writes nothing
+  -- the write side: a write past the end latches past_end and writes nothing
   local ws = serialize.WriteStream.new(0)
   check(probe.write(ws, { value = 1 }, 1) == false, "writing to a zero-capacity stream fails")
-  check(ws:error() == serialize.SerializeError.Overflow, "the write failure latches Overflow")
+  check(ws:error() == serialize.Refusal.PastEnd, "the write failure latches past_end")
   check(ws:bitsProcessed() == 0 and ws:data() == "", "a refused write writes nothing")
   check(ws:serializeAlign() == false, "align refuses on a failed write stream")
   raises(function() serialize.WriteStream.new(7) end, "serialize: bit writer buffer size must be a multiple of 8 bytes")
@@ -163,7 +163,7 @@ function TestSmoke()
   check(ms:alignBits() == 7 and ms:serializeAlign() and ms:bitsProcessed() == 20, "measure charges an align 7 bits")
   check(ms:bytesProcessed() == 3, "measure rounds up to a byte")
   check(ms:serializeObject({ serialize = function() return false end }) == false, "an object that fails fails the stream")
-  check(ms:error() == serialize.SerializeError.ValueOutOfRange, "an object failing without a kind latches ValueOutOfRange")
+  check(ms:error() == serialize.Refusal.ValueOutOfRange, "an object failing without a kind latches value_out_of_range")
   check(probe.measure(ms, { value = 0 }, 1) == false and ms:bitsProcessed() == 20, "a failed measure counts nothing")
 
   -- the arm contract guard: an arm that lies about its result raises by name
@@ -171,7 +171,7 @@ function TestSmoke()
   raises(function() liar.write(serialize.WriteStream.new(8), { value = 0 }) end, "serialize: serializeLiar returned false without latching")
   raises(function() liar.measure(serialize.MeasureStream.new(), { value = 0 }) end, "serialize: serializeLiar arm must return a boolean")
   local lrs = serialize.ReadStream.new("")
-  lrs:_fail(serialize.SerializeError.Overflow)
+  lrs:_fail(serialize.Refusal.PastEnd)
   check(liar.read(lrs, { value = 0 }) == false, "a failed stream never reaches the arm")
 
   -- a value check (checkValue) raises on write and measure on a failed stream

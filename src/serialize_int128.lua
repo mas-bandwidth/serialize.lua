@@ -16,8 +16,8 @@
 
 local stream = require("serialize_stream")
 
-local VALUE_OUT_OF_RANGE = stream.SerializeError.ValueOutOfRange
-local OVERFLOW = stream.SerializeError.Overflow
+local VALUE_OUT_OF_RANGE = stream.Refusal.ValueOutOfRange
+local PAST_END = stream.Refusal.PastEnd
 local PANIC_MIN_MAX = "serialize: min must not be greater than max"
 
 local math_type = math.type
@@ -364,7 +364,7 @@ local int128 = {
     local numBits = bitsRequired128(min, max)
     if numBits == 0 then return true end
     if s._bits + numBits > s._numBits then
-      return s:_fail(OVERFLOW)
+      return s:_fail(PAST_END)
     end
     local offset = U.sub(value, min)
     return writeGroups128(s, offset, numBits)
@@ -400,7 +400,7 @@ local uint128 = {
   -- half, each half as 64 bits (serialize.go WriteStream.SerializeUint128).
   write = function(s, value)
     if s._bits + 128 > s._numBits then
-      return s:_fail(OVERFLOW)
+      return s:_fail(PAST_END)
     end
     if not s:_writeBits(value.lo, 64) then return false end
     return s:_writeBits(value.hi, 64)

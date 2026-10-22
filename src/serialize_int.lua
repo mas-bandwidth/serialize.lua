@@ -16,7 +16,7 @@
 
 local stream = require("serialize_stream")
 
-local VALUE_OUT_OF_RANGE = stream.SerializeError.ValueOutOfRange
+local VALUE_OUT_OF_RANGE = stream.Refusal.ValueOutOfRange
 local PANIC_MIN_MAX = "serialize: min must not be greater than max"
 
 local INT32_MIN = -2147483648

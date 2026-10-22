@@ -20,8 +20,8 @@
 
 local stream = require("serialize_stream")
 
-local VALUE_OUT_OF_RANGE = stream.SerializeError.ValueOutOfRange
-local OVERFLOW = stream.SerializeError.Overflow
+local VALUE_OUT_OF_RANGE = stream.Refusal.ValueOutOfRange
+local PAST_END = stream.Refusal.PastEnd
 
 local PANIC_FIXED_PARAMS = "serialize: fixed point requires integer bits >= 1, fraction bits >= 0, a Q format that fits the storage width, and min <= max"
 local PANIC_FIXED_BOUNDS = "serialize: fixed point bounds in whole units do not fit the Q format"
@@ -172,7 +172,7 @@ local fixed = {
     end
     if numBits == 0 then return true end
     if s._bits + numBits > s._numBits then
-      return s:_fail(OVERFLOW)
+      return s:_fail(PAST_END)
     end
     return writeGroups128(s, offset, numBits)
   end,

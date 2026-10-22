@@ -1,8 +1,8 @@
 -- test/int_relative: the int_relative arm (DESIGN.md (h); STANDARD.md int_relative).
 -- Run by `make test T=int_relative` from the repository root. Pins: every record
--- of conformance/int_relative.txt, read and (on `writer = canonical` records) the
--- writer's bytes, byte for byte; the file's record count; and serialize.go
--- v1.15.1's TestIntRelativeValidation cases, ported.
+-- of conformance/int_relative.txt through the shared runner, the canonical
+-- absolute tier (non_canonical) with its reversed witnesses, and serialize.go's
+-- TestIntRelativeValidation cases, ported.
 
 local serialize = require("serialize")
 
@@ -25,82 +25,67 @@ local function hexToBytes(s)
   return table.concat(out)
 end
 
-local function parseVectors(text)
-  local records, cur = {}, nil
-  for line in (text .. "\n"):gmatch("([^\n]*)\n") do
-    if line:match("^%s*$") then
-      if cur then records[#records + 1] = cur; cur = nil end
-    elseif not line:match("^%s*#") then
-      cur = cur or {}
-      local key, val = line:match("^(%S+)%s+(.*)$")
-      if key then cur[key] = val end
-    end
-  end
-  return records
-end
+local C = assert(loadfile("test/conformance/conformance_test.lua"))()
 
 function TestSerializeIntRelative()
-  local f = assert(io.open("conformance/int_relative.txt", "r"))
-  local text = f:read("a")
-  f:close()
-
-  local records = parseVectors(text)
-
-  local opCount = 0
-  for line in text:gmatch("[^\n]+") do
-    if line:match("^operation%s+") then opCount = opCount + 1 end
-  end
+  -- every record through the shared runner (test/conformance): the value, bits
+  -- consumed, the stated refusal reason (value_out_of_range or non_canonical),
+  -- the destination untouched, the stream terminal, the canonical bytes
+  local records = C.parseVectors("conformance/int_relative.txt")
+  for _, rec in ipairs(records) do C.runRecord(rec) end
   print("int_relative conformance records: " .. #records)
-  check(#records == opCount, "record count " .. #records .. " != operation lines " .. opCount)
+  check(#records == 49, "record count " .. #records)
 
-  local ValueOutOfRange = serialize.SerializeError.ValueOutOfRange
+  local ValueOutOfRange = serialize.Refusal.ValueOutOfRange
+  local NonCanonical = serialize.Refusal.NonCanonical
 
-  for _, rec in ipairs(records) do
-    local name = rec.name or "?"
-    local prev = tonumber((rec["param"] or ""):match("previous%s*=%s*(%-?%d+)"))
-    check(prev ~= nil, name .. ": no previous param")
-    local bytes = hexToBytes(rec["bytes"] or "")
-    local expectRefused = (rec.expect == "refused")
-    local expectValue = expectRefused and nil or tonumber((rec.expect or ""):match("value%s*=%s*(%d+)"))
-    local consumed = tonumber(rec.consumed)
-
-    -- READ
-    local rs = serialize.ReadStream.new(bytes)
-    local holder = { value = -987654321 }
-    local ok = rs:serializeIntRelative(prev, holder)
-    if expectRefused then
-      check(ok == false, name .. ": refused read succeeded, error=" .. tostring(rs:error()))
-      check(rs:error() ~= nil, name .. ": refused read latched no error")
-      check(holder.value == -987654321, name .. ": refusal wrote the destination")
-      local before = rs:bitsProcessed()
-      local h2 = { value = -111111111 }
-      local ok2 = rs:serializeIntRelative(prev, h2)
-      check(ok2 == false, name .. ": stream not terminal after refusal")
-      check(h2.value == -111111111, name .. ": terminal read wrote the destination")
-      check(rs:bitsProcessed() == before, name .. ": terminal read consumed bits")
-    else
-      check(ok == true, name .. ": accepted read failed, error=" .. tostring(rs:error()))
-      check(holder.value == expectValue, name .. ": decoded " .. tostring(holder.value)
-        .. " != expected " .. tostring(expectValue))
-      if consumed then
-        check(rs:bitsProcessed() == consumed, name .. ": consumed " .. rs:bitsProcessed()
-          .. " != " .. consumed)
-      end
-    end
-
-    -- WRITER: only records marked canonical pin the bytes a writer emits
-    if rec.writer == "canonical" then
-      check(not expectRefused, name .. ": a refused record cannot be canonical")
-      local ws = serialize.WriteStream.new(8)
-      local wh = { value = expectValue }
-      local wok = ws:serializeIntRelative(prev, wh)
-      check(wok == true, name .. ": canonical write failed, error=" .. tostring(ws:error()))
-      ws:flush()
-      check(ws:data() == bytes, name .. ": writer bytes differ")
-    end
+  -- STANDARD.md int_relative, "The absolute tier is canonical too": the
+  -- absolute tier carrying a difference a bounded tier takes is refused as
+  -- non_canonical, at every bounded tier's top and at a difference of one;
+  -- the first difference past the last tier is accepted (the reversed witness:
+  -- a reader without the rule accepts every one of these).
+  local function absolute(previous, current)
+    local ws = serialize.WriteStream.new(8)
+    check(ws:serializeBits({ value = 0 }, 6))
+    check(ws:serializeBits({ value = current }, 32))
+    ws:flush()
+    local rs = serialize.ReadStream.new(ws:data())
+    local h = { value = -5 }
+    local ok = rs:serializeIntRelative(previous, h)
+    return ok, rs:error(), h.value
+  end
+  for _, difference in ipairs({ 1, 2, 6, 7, 23, 24, 280, 281, 4377, 4378, 69914 }) do
+    local ok, err, value = absolute(1000, 1000 + difference)
+    check(ok == false and err == NonCanonical and value == -5,
+      "absolute tier with difference " .. difference .. ": " .. tostring(err))
+  end
+  do
+    local ok, err, value = absolute(1000, 1000 + 69915)
+    check(ok and err == nil and value == 1000 + 69915, "the first absolute difference is accepted")
+    -- the domain and ordering rule comes first: past the domain with a small
+    -- difference is value_out_of_range, and so is not increasing
+    ok, err = absolute(2147483647 - 3, 2147483648)
+    check(not ok and err == ValueOutOfRange, "past the domain with a small difference: " .. tostring(err))
+    ok, err = absolute(1000, 1000)
+    check(not ok and err == ValueOutOfRange, "equal to previous: " .. tostring(err))
+    -- the 32-bit group's top bit set: 2^32 - 1 is past the domain, computed in
+    -- 64 bits so the difference never wraps
+    ok, err = absolute(2147483647 - 1, 0xFFFFFFFF)
+    check(not ok and err == ValueOutOfRange, "all 32 bits set: " .. tostring(err))
+  end
+  -- the writer takes the first tier the difference fits, so it never writes a
+  -- non-canonical absolute tier: every round trip at the tier edges reads back
+  for _, difference in ipairs({ 1, 6, 7, 23, 24, 280, 281, 4377, 4378, 69914, 69915 }) do
+    local ws = serialize.WriteStream.new(8)
+    check(ws:serializeIntRelative(10, { value = 10 + difference }), "write difference " .. difference)
+    ws:flush()
+    local rs = serialize.ReadStream.new(ws:data())
+    local h = {}
+    check(rs:serializeIntRelative(10, h) and h.value == 10 + difference,
+      "round trip difference " .. difference .. ": " .. tostring(rs:error()))
   end
 
-  -- serialize.go v1.15.1 TestIntRelativeValidation, ported.
+  -- serialize.go TestIntRelativeValidation, ported.
 
   -- the 32-bit fallback must reject a value that violates the previous < current contract
   do
@@ -162,7 +147,7 @@ function TestSerializeIntRelative()
   end
 
   -- a current inside the int32 type but outside the operation's domain is not
-  -- misuse: write and measure latch ValueOutOfRange and write nothing
+  -- misuse: write and measure latch value_out_of_range and write nothing
   -- (serialize.go WriteStream/MeasureStream SerializeIntRelative; DESIGN.md (c), (h)).
   do
     for _, current in ipairs({ -1, -5, -2147483648 }) do
