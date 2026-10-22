@@ -1,11 +1,12 @@
 name: ci
 on:
   push:
-    branches: [main, sprint/serialize-lua]
+    branches: [main]
   pull_request:
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, fleet, serialize]
     steps:
       - uses: actions/checkout@v4
 
@@ -35,19 +36,23 @@ jobs:
       - name: Run the test suite
         run: make test
 
+      - name: Check the workflow (pins and fork guard)
+        run: make check-ci
+
   corpus:
     name: STANDARD.md and conformance/ match mas-bandwidth/serialize
-    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, fleet, serialize]
     env:
       SERIALIZE_TAG: v1.17.0
     steps:
       - uses: actions/checkout@v4
 
       - name: Check out mas-bandwidth/serialize at the pinned tag
-        run: git clone --quiet --depth 1 --branch "$SERIALIZE_TAG" https://github.com/mas-bandwidth/serialize.git /tmp/serialize
+        run: rm -rf "$RUNNER_TEMP/serialize" && git clone --quiet --depth 1 --branch "$SERIALIZE_TAG" https://github.com/mas-bandwidth/serialize.git "$RUNNER_TEMP/serialize"
 
       - name: conformance/ matches the pinned release
-        run: diff -ru /tmp/serialize/conformance conformance
+        run: diff -ru "$RUNNER_TEMP/serialize"/conformance conformance
 
       - name: STANDARD.md matches the pinned release
-        run: diff -ru /tmp/serialize/STANDARD.md STANDARD.md
+        run: diff -ru "$RUNNER_TEMP/serialize"/STANDARD.md STANDARD.md

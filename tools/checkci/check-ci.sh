@@ -15,6 +15,8 @@ LUA_URL="https://www.lua.org/ftp/lua-${LUA_VERSION}.tar.gz"
 # The corpus pin (DESIGN.md, "The sources"): mas-bandwidth/serialize's tag.
 CORPUS_TAG=$(grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' DESIGN.md | head -n1)
 
+FORK_GUARD="    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository"
+
 # check_ci runs the checks on one ci.yml file. It names the offending line of
 # the file when it can, and returns nonzero if anything is wrong.
 check_ci() {
@@ -44,6 +46,23 @@ check_ci() {
     echo "check-ci FAIL: ci.yml does not pin the corpus tag $CORPUS_TAG from DESIGN.md"
     f=1
   fi
+  # THE FORK GUARD: the repository is public and its runners are the fleet's
+  # own, so every job carries the guard on the line before its runs-on, and no
+  # job runs on a hosted image.
+  local unguarded
+  unguarded=$(awk -v guard="$FORK_GUARD" '
+    /^[[:space:]]+runs-on:/ { if (prev != guard) print NR }
+    NF { prev = $0 }
+  ' "$ci")
+  if [ -n "$unguarded" ]; then
+    echo "check-ci FAIL: a job runs without the fork guard (runs-on at line $(echo $unguarded | tr ' ' ','))"
+    f=1
+  fi
+  if grep -nE '^[[:space:]]+runs-on:.*(ubuntu|macos|windows)-' "$ci" >/dev/null 2>&1; then
+    ln=$(grep -nE '^[[:space:]]+runs-on:.*(ubuntu|macos|windows)-' "$ci" | head -n1 | cut -d: -f1)
+    echo "check-ci FAIL: a job runs on a hosted image, not the fleet (line $ln)"
+    f=1
+  fi
   return "$f"
 }
 
@@ -66,3 +85,11 @@ if check_ci "$scratch"; then
   exit 1
 fi
 echo "check-ci control: the pasted sha256 was refused, as required"
+
+# Self-control: a copy with the fork guard dropped from every job must FAIL.
+grep -vF "$FORK_GUARD" "$CI_FILE" > "$scratch"
+if check_ci "$scratch"; then
+  echo "check-ci CONTROL FAIL: expected a job without the fork guard to be refused"
+  exit 1
+fi
+echo "check-ci control: the unguarded jobs were refused, as required"
