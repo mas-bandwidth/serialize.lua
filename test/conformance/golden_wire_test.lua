@@ -43,7 +43,7 @@ local function decodedEqual(st, a, b)
 end
 
 local function findRecord(name)
-  for _, rec in ipairs(C.parseVectors("conformance/message.txt")) do
+  for _, rec in ipairs(C.parseVectors(C.corpusRoot .. "/conformance/message.txt")) do
     if rec.name == name then return rec end
   end
   error("golden record not found: " .. name)
