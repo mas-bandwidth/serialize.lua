@@ -28,6 +28,12 @@
 -- runs the real corpus and must fail EXACTLY the vectors
 -- conformance-controls/<rule>.expected names. A needle that no longer matches
 -- is a failure of the control, never a silent no-op.
+--
+-- THE CORPUS ROOT: the directory holding conformance/ and conformance-controls/.
+-- It is the repository root (the vendored copy) unless SERIALIZE_CORPUS_DIR
+-- names another one, which is how the nightly functional test points this
+-- runner at mas-bandwidth/serialize main. A root that holds no vectors is red,
+-- by name, never an empty pass.
 
 local function check(cond, msg)
   if not cond then error(msg, 2) end
@@ -617,9 +623,22 @@ end
 -- the corpus
 --------------------------------------------------------------------------------
 
+-- corpusRootOf(value): the corpus root for a SERIALIZE_CORPUS_DIR value; unset
+-- or empty is the repository root.
+local function corpusRootOf(value)
+  if value == nil or value == "" then return "." end
+  return value
+end
+
+local CORPUS_ROOT = corpusRootOf(os.getenv("SERIALIZE_CORPUS_DIR"))
+
+local function shellQuote(s)
+  return "'" .. s:gsub("'", "'\\''") .. "'"
+end
+
 local function readDir(path, suffix)
   local out = {}
-  local p = io.popen("ls " .. path .. " 2>/dev/null")
+  local p = io.popen("ls " .. shellQuote(path) .. " 2>/dev/null")
   if not p then return out end
   for line in p:lines() do
     if line:sub(-#suffix) == suffix then out[#out + 1] = line end
@@ -629,19 +648,22 @@ local function readDir(path, suffix)
   return out
 end
 
--- runCorpus(): every record of every file; returns the per-file counts, the
--- total, and the names of the records that failed (with their messages).
-local function runCorpus()
-  local files = readDir("conformance", ".txt")
-  check(#files > 0, "no conformance vectors found: the vendored conformance/ directory is missing or empty")
+-- runCorpus(root): every record of every file under root/conformance/ (root
+-- defaults to the corpus root); returns the per-file counts, the total, and the
+-- names of the records that failed (with their messages).
+local function runCorpus(root)
+  root = root or CORPUS_ROOT
+  local dir = root .. "/conformance"
+  local files = readDir(dir, ".txt")
+  check(#files > 0, "no conformance vectors found: " .. dir .. "/ is missing or empty")
   local names = {}
   local counts = {}
   local failed = {}
   local total = 0
   for _, file in ipairs(files) do
-    local records = parseVectors("conformance/" .. file)
+    local records = parseVectors(dir .. "/" .. file)
     local declared = 0
-    for line in io.lines("conformance/" .. file) do
+    for line in io.lines(dir .. "/" .. file) do
       if line:match("^operation%s") then declared = declared + 1 end
     end
     check(#records > 0 and #records == declared, file .. ": parsed " .. #records
@@ -659,6 +681,7 @@ local function runCorpus()
 end
 
 function TestConformanceCorpus()
+  print("conformance: corpus root " .. CORPUS_ROOT)
   local counts, total, failed = runCorpus()
   for _, c in ipairs(counts) do print(c.file .. ": " .. c.n .. " records") end
   for _, f in ipairs(failed) do print("  FAIL " .. f.err) end
@@ -668,7 +691,7 @@ end
 
 -- Control: an operation with no runner is REJECTED, never skipped.
 function TestConformanceControlUnknownOperation()
-  local recs = parseVectors("conformance-controls/unknown-operation.txt")
+  local recs = parseVectors(CORPUS_ROOT .. "/conformance-controls/unknown-operation.txt")
   check(#recs == 1, "the unknown-operation control holds one record")
   local ok, err = pcall(runRecord, recs[1])
   check(not ok, "control unknown-operation: an operation with no runner must be REJECTED")
@@ -839,7 +862,7 @@ end
 
 local function readExpected(name)
   local list, set = {}, {}
-  for line in io.lines("conformance-controls/" .. name .. ".expected") do
+  for line in io.lines(CORPUS_ROOT .. "/conformance-controls/" .. name .. ".expected") do
     if not line:match("^#") and line:match("%S") then
       local n = line:match("^%s*(.-)%s*$")
       list[#list + 1] = n
@@ -876,7 +899,7 @@ function TestConformanceControls()
   -- every vendored .expected list has a control here, and every control a list
   local have = {}
   for _, c in ipairs(CONTROLS) do have[c.name] = true end
-  for _, f in ipairs(readDir("conformance-controls", ".expected")) do
+  for _, f in ipairs(readDir(CORPUS_ROOT .. "/conformance-controls", ".expected")) do
     local n = f:sub(1, -#".expected" - 1)
     check(have[n], "conformance-controls/" .. f .. " has no sabotage control in this runner")
   end
@@ -950,7 +973,34 @@ function TestConformanceRunnerWitnesses()
     "the well-formed twin of the malformed records parses")
 end
 
+-- The corpus root override, a unit test: unset and empty are the repository
+-- root, a named directory is read in place of the vendored copy, and a root
+-- that holds no vectors is red, by name. The scratch root lives under build/
+-- (gitignored), inside the working directory.
+function TestCorpusRootOverride()
+  check(corpusRootOf(nil) == ".", "an unset SERIALIZE_CORPUS_DIR is the repository root")
+  check(corpusRootOf("") == ".", "an empty SERIALIZE_CORPUS_DIR is the repository root")
+  check(corpusRootOf("build/x") == "build/x", "SERIALIZE_CORPUS_DIR names the corpus root")
+
+  local root = "build/corpus-root-override"
+  check(os.execute("rm -rf " .. shellQuote(root) .. " && mkdir -p " .. shellQuote(root .. "/conformance")),
+    "could not make the scratch corpus root " .. root)
+  local f = assert(io.open(root .. "/conformance/bool.txt", "w"))
+  f:write("operation bool\nname override-true\nbytes 01\nexpect value = true\nconsumed 1\n\n"
+    .. "operation bool\nname override-false\nbytes 00\nexpect value = false\nconsumed 1\n")
+  f:close()
+  local counts, total, failed = runCorpus(root)
+  check(#counts == 1 and counts[1].file == "bool.txt" and total == 2 and #failed == 0,
+    "the scratch root's two vectors are the ones run, got " .. total .. " in " .. #counts .. " files")
+
+  local ok, err = pcall(runCorpus, root .. "/missing")
+  check(not ok and tostring(err):find(root .. "/missing/conformance/ is missing or empty", 1, true) ~= nil,
+    "a root that holds no vectors is red, by name, got " .. tostring(err))
+  os.execute("rm -rf " .. shellQuote(root))
+end
+
 return {
+  corpusRoot = CORPUS_ROOT,
   parseVectors = parseVectors,
   buildSteps = buildSteps,
   treeOf = treeOf,
