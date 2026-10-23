@@ -31,7 +31,7 @@ jobs:
   conformance:
     name: the port against mas-bandwidth/serialize main
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, Linux, X64, fleet]
+    runs-on: [self-hosted, Linux, X64, nightly]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
