@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/serialize.go/v2"
 )
@@ -29,8 +30,29 @@ import (
 // It is the negative control: the same harness, one deliberate divergence.
 var widenIntRange = false
 
+// defaultSeed is the per-push gate's seed: every push runs the same programs.
+const defaultSeed = 0x1234567890abcdef
+
+// The extended-run knobs. Their defaults are the per-push gate exactly: one
+// round of 2000 programs from defaultSeed. The nightly run passes a seed that
+// varies per run and a duration, and the seed is logged first so a failure
+// reproduces with -seed=<logged value> (rounds are drawn in order from one
+// generator, so the failing round is reached again from the same seed).
+var (
+	fuzzSeed     uint64
+	fuzzPrograms int
+	fuzzRounds   int
+	fuzzDuration time.Duration
+	failuresDir  string
+)
+
 func init() {
 	flag.BoolVar(&widenIntRange, "widen-int", false, "negative control: widen the int64 range by one bit")
+	flag.Uint64Var(&fuzzSeed, "seed", defaultSeed, "generator seed; logged at the start of every run")
+	flag.IntVar(&fuzzPrograms, "programs", 2000, "programs per round")
+	flag.IntVar(&fuzzRounds, "rounds", 1, "run at least this many rounds")
+	flag.DurationVar(&fuzzDuration, "duration", 0, "keep running rounds until this much time has passed (0: stop after -rounds)")
+	flag.StringVar(&failuresDir, "failures-dir", "", "on a failure, write the failing program and its bytes here")
 }
 
 const bufferSize = 1 << 16
@@ -390,11 +412,12 @@ type program struct {
 	ops []op
 }
 
+// rng is seeded from -seed when the test starts (flags are parsed by then).
+// math/rand/v2; the seed never comes from the clock.
 var rng *rand.Rand
 
-func init() {
-	// Fixed seed: no clock. math/rand/v2.
-	rng = rand.New(rand.NewPCG(0x1234567890abcdef, 0x0ddc0ffee))
+func seedRNG(seed uint64) {
+	rng = rand.New(rand.NewPCG(seed, 0x0ddc0ffee))
 }
 
 func randRange(lo, hi int64) int64 {
@@ -882,14 +905,41 @@ func dumpProgram(p program) string {
 }
 
 func TestDifferentialAgainstSerializeGo(t *testing.T) {
-	const n = 2000
 	const batch = 100
-	programs := make([]program, n)
+	if fuzzPrograms < 1 {
+		t.Fatalf("-programs must be at least 1, got %d", fuzzPrograms)
+	}
+	seedRNG(fuzzSeed)
+	if fuzzRounds < 1 {
+		t.Fatalf("-rounds must be at least 1, got %d", fuzzRounds)
+	}
+	t.Logf("seed %d (0x%x), %d programs per round, at least %d rounds, duration %s",
+		fuzzSeed, fuzzSeed, fuzzPrograms, fuzzRounds, fuzzDuration)
+
+	tmp := t.TempDir()
+	if failuresDir != "" {
+		// Any failure, the driver's included, keeps the batch files the Lua
+		// side was given, beside the per-program reports below.
+		t.Cleanup(func() {
+			if !t.Failed() {
+				return
+			}
+			saveBatches(t, tmp)
+		})
+	}
+
 	seen := map[string]bool{}
-	for i := range programs {
-		programs[i] = genProgram()
-		for _, o := range programs[i].ops {
-			seen[o.kind] = true
+	totalPrograms, totalMutated, rounds := 0, 0, 0
+	// The deadline is wall-clock time, the knob an extended run is budgeted in.
+	// This is the functional tier (it spawns the interpreter), never a unit test.
+	deadline := time.Now().Add(fuzzDuration)
+	for {
+		mutated := runRound(t, rounds, fuzzPrograms, batch, tmp, seen)
+		totalPrograms += fuzzPrograms
+		totalMutated += mutated
+		rounds++
+		if rounds >= fuzzRounds && (fuzzDuration <= 0 || !time.Now().Before(deadline)) {
+			break
 		}
 	}
 	for _, kind := range []string{
@@ -899,6 +949,71 @@ func TestDifferentialAgainstSerializeGo(t *testing.T) {
 	} {
 		if !seen[kind] {
 			t.Fatalf("generated programs never exercise %s", kind)
+		}
+	}
+	t.Logf("ok  seed %d: %d rounds, %d programs, %d mutated, %d operation kinds",
+		fuzzSeed, rounds, totalPrograms, totalMutated, len(seen))
+}
+
+// reproLine is the command that runs the same programs again, through the
+// given round (rounds are drawn in order from one generator).
+func reproLine(round int) string {
+	line := fmt.Sprintf("reproduce: cd fuzz && go test -count=1 -timeout 0 -run TestDifferentialAgainstSerializeGo -v -seed=%d -programs=%d -rounds=%d",
+		fuzzSeed, fuzzPrograms, round+1)
+	if widenIntRange {
+		line += " -widen-int"
+	}
+	return line
+}
+
+// saveBatches copies the round's driver batch files into -failures-dir.
+func saveBatches(t *testing.T, tmp string) {
+	if err := os.MkdirAll(failuresDir, 0o755); err != nil {
+		t.Logf("failures-dir: %v", err)
+		return
+	}
+	entries, err := os.ReadDir(tmp)
+	if err != nil {
+		t.Logf("failures-dir: %v", err)
+		return
+	}
+	for _, e := range entries {
+		data, err := os.ReadFile(filepath.Join(tmp, e.Name()))
+		if err != nil {
+			continue
+		}
+		name := fmt.Sprintf("seed-%d-%s", fuzzSeed, e.Name())
+		if err := os.WriteFile(filepath.Join(failuresDir, name), data, 0o644); err != nil {
+			t.Logf("failures-dir: %v", err)
+		}
+	}
+}
+
+// runRound generates n programs from rng and checks them; it returns how many
+// were mutated. A failure names the seed and round, writes the failing program
+// to -failures-dir when set, and stops the test.
+func runRound(t *testing.T, round, n, batch int, tmp string, seen map[string]bool) int {
+	repro := reproLine(round)
+	fail := func(i int, format string, args ...any) {
+		t.Helper()
+		msg := fmt.Sprintf("round %d ", round) + fmt.Sprintf(format, args...)
+		if failuresDir != "" {
+			report := fmt.Sprintf("seed %d (0x%x)\n%s\n\n%s\n", fuzzSeed, fuzzSeed, repro, msg)
+			name := fmt.Sprintf("seed-%d-round-%d-program-%d.txt", fuzzSeed, round, i)
+			if err := os.MkdirAll(failuresDir, 0o755); err == nil {
+				if err := os.WriteFile(filepath.Join(failuresDir, name), []byte(report), 0o644); err != nil {
+					t.Logf("failures-dir: %v", err)
+				}
+			}
+		}
+		t.Fatalf("seed %d: %s\n%s", fuzzSeed, msg, repro)
+	}
+
+	programs := make([]program, n)
+	for i := range programs {
+		programs[i] = genProgram()
+		for _, o := range programs[i].ops {
+			seen[o.kind] = true
 		}
 	}
 
@@ -920,7 +1035,6 @@ func TestDifferentialAgainstSerializeGo(t *testing.T) {
 	luaBytes := make([][]byte, n)
 	luaRead := make([]readResult, n)
 	luaMutRead := make([]readResult, n)
-	tmp := t.TempDir()
 	for start := 0; start < n; start += batch {
 		end := start + batch
 		if end > n {
@@ -951,6 +1065,8 @@ func TestDifferentialAgainstSerializeGo(t *testing.T) {
 				sb.WriteString("END\n")
 			}
 		}
+		// One file name per batch index: a later round overwrites an earlier
+		// round's file, so the files kept on a failure are the failing round's.
 		batchFile := filepath.Join(tmp, fmt.Sprintf("batch%d.txt", start/batch))
 		if err := os.WriteFile(batchFile, []byte(sb.String()), 0o644); err != nil {
 			t.Fatal(err)
@@ -970,7 +1086,8 @@ func TestDifferentialAgainstSerializeGo(t *testing.T) {
 			}
 		}
 		if pos != len(lines) {
-			t.Fatalf("batch %d: consumed %d result lines, driver printed %d", start/batch, pos, len(lines))
+			t.Fatalf("seed %d round %d batch %d: consumed %d result lines, driver printed %d\n%s",
+				fuzzSeed, round, start/batch, pos, len(lines), repro)
 		}
 	}
 
@@ -978,25 +1095,25 @@ func TestDifferentialAgainstSerializeGo(t *testing.T) {
 	// program's values.
 	for i := 0; i < n; i++ {
 		if !bytes.Equal(goBytes[i], luaBytes[i]) {
-			t.Fatalf("program %d: bytes differ\ngo:  %x\nlua: %x\nprogram:\n%s",
+			fail(i, "program %d: bytes differ\ngo:  %x\nlua: %x\nprogram:\n%s",
 				i, goBytes[i], luaBytes[i], dumpProgram(programs[i]))
 		}
 		want := programTokens(programs[i])
 		goRes := readGo(programs[i], luaBytes[i])
 		if goRes.n != len(programs[i].ops) {
-			t.Fatalf("program %d: go read refused at step %d/%d\nbytes: %x\nprogram:\n%s",
+			fail(i, "program %d: go read refused at step %d/%d\nbytes: %x\nprogram:\n%s",
 				i, goRes.n, len(programs[i].ops), goBytes[i], dumpProgram(programs[i]))
 		}
 		if bad := valuesAgree(want, goRes.tokens, programs[i]); bad >= 0 {
-			t.Fatalf("program %d: go decoded values differ at step %d\nwant: %q\ngot:  %q\nprogram:\n%s",
+			fail(i, "program %d: go decoded values differ at step %d\nwant: %q\ngot:  %q\nprogram:\n%s",
 				i, bad, want, goRes.tokens, dumpProgram(programs[i]))
 		}
 		if luaRead[i].n != len(programs[i].ops) {
-			t.Fatalf("program %d: lua read refused at step %d/%d\nbytes: %x\nprogram:\n%s",
+			fail(i, "program %d: lua read refused at step %d/%d\nbytes: %x\nprogram:\n%s",
 				i, luaRead[i].n, len(programs[i].ops), goBytes[i], dumpProgram(programs[i]))
 		}
 		if !equalStrings(luaRead[i].tokens, goRes.tokens) {
-			t.Fatalf("program %d: lua decoded values differ from go at step %d\ngo:  %q\nlua: %q\nprogram:\n%s",
+			fail(i, "program %d: lua decoded values differ from go at step %d\ngo:  %q\nlua: %q\nprogram:\n%s",
 				i, firstDiff(goRes.tokens, luaRead[i].tokens), goRes.tokens, luaRead[i].tokens, dumpProgram(programs[i]))
 		}
 	}
@@ -1010,20 +1127,20 @@ func TestDifferentialAgainstSerializeGo(t *testing.T) {
 		goRes := readGo(programs[i], mutated[i])
 		luaRes := luaMutRead[i]
 		if goRes.n != luaRes.n {
-			t.Fatalf("program %d: mutation disagreement at step %d\nmutated from %x to %x\nprogram:\n%s",
+			fail(i, "program %d: mutation disagreement at step %d\nmutated from %x to %x\nprogram:\n%s",
 				i, firstDiffInts(goRes.n, luaRes.n), goBytes[i], mutated[i], dumpProgram(programs[i]))
 		}
 		if goRes.reason != luaRes.reason {
-			t.Fatalf("program %d: mutation reason disagreement: go %s, lua %s\nmutated from %x to %x\nprogram:\n%s",
+			fail(i, "program %d: mutation reason disagreement: go %s, lua %s\nmutated from %x to %x\nprogram:\n%s",
 				i, goRes.reason, luaRes.reason, goBytes[i], mutated[i], dumpProgram(programs[i]))
 		}
 		if !equalStrings(goRes.tokens, luaRes.tokens) {
-			t.Fatalf("program %d: mutation value disagreement at step %d\ngo:  %q\nlua: %q\nmutated from %x to %x\nprogram:\n%s",
+			fail(i, "program %d: mutation value disagreement at step %d\ngo:  %q\nlua: %q\nmutated from %x to %x\nprogram:\n%s",
 				i, firstDiff(goRes.tokens, luaRes.tokens), goRes.tokens, luaRes.tokens,
 				goBytes[i], mutated[i], dumpProgram(programs[i]))
 		}
 	}
-	t.Logf("ok  %d programs, %d mutated, %d operation kinds", n, mutatedCount, len(seen))
+	return mutatedCount
 }
 
 func firstDiff(want, got []string) int {
