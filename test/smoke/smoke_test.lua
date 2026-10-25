@@ -38,15 +38,15 @@ local function installProbe()
             if v == nil then return false end
             return true, v
           end,
-          measure = function(s, value, bits) return s:_measure(bits) end,
+          measure = function(s, _value, bits) return s:_measure(bits) end,
         },
         serializeTyped = {
           checkValue = function(value)
             if math.type(value) ~= "integer" then error("serialize: probe value must be an integer", 0) end
           end,
           write = function(s, value) return s:_writeBits(value, 1) end,
-          read = function(s) return false end,
-          measure = function(s, value) return s:_measure(1) end,
+          read = function(_s) return false end,
+          measure = function(s, _value) return s:_measure(1) end,
         },
         serializeLiar = {
           write = function() return false end,

@@ -56,12 +56,12 @@ local function doubleBits(v)
   return string.unpack("<i8", string.pack("<d", v))
 end
 
--- roundDivByPow2(M, d): M / 2^d rounded to the nearest integer, ties to even
+-- roundDivByPow2(sig, d): sig / 2^d rounded to the nearest integer, ties to even
 -- (d >= 1). Used only on the rare subnormal path.
-local function roundDivByPow2(M, d)
+local function roundDivByPow2(sig, d)
   if d >= 54 then return 0 end
-  local q = M >> d
-  local r = M & ((1 << d) - 1)
+  local q = sig >> d
+  local r = sig & ((1 << d) - 1)
   local half = 1 << (d - 1)
   if r == half then
     if (q & 1) == 1 then q = q + 1 end
@@ -92,25 +92,25 @@ local function float32Bits(v)
     return s << 31
   end
 
-  -- value magnitude = M * 2^p, with the leading bit of M at position k
-  local M, p, k
+  -- value magnitude = sig * 2^p, with the leading bit of sig at position k
+  local sig, p, k
   if e == 0 then
-    M = m
+    sig = m
     p = -1074
     k = bitlen(m) - 1
   else
-    M = (1 << 52) | m
+    sig = (1 << 52) | m
     p = e - 1075
     k = 52
   end
 
-  -- normalize M to a 24-bit significand t at the MSB, rounding to nearest,
+  -- normalize sig to a 24-bit significand t at the MSB, rounding to nearest,
   -- ties to even on the discarded bits; value = t * 2^q (DESIGN.md (e))
   local shift = k - 23
   local t, q
   if shift > 0 then
-    t = M >> shift
-    local r = M & ((1 << shift) - 1)
+    t = sig >> shift
+    local r = sig & ((1 << shift) - 1)
     local half = 1 << (shift - 1)
     if r == half then
       if (t & 1) == 1 then t = t + 1 end
@@ -119,7 +119,7 @@ local function float32Bits(v)
     end
     q = p + shift
   else
-    t = M << (-shift)
+    t = sig << (-shift)
     q = p + shift
   end
 
@@ -137,11 +137,11 @@ local function float32Bits(v)
     return (s << 31) | ((E + 127) << 23) | (t - (1 << 23))
   end
 
-  -- subnormal single: the exact value M*2^p rounded straight onto the 2^-149
-  -- grid, ties to even, in one rounding from the exact M (DESIGN.md (e)).
+  -- subnormal single: the exact value sig*2^p rounded straight onto the 2^-149
+  -- grid, ties to even, in one rounding from the exact sig (DESIGN.md (e)).
   -- Rounding the pre-rounded 24-bit t instead would double-round and pick the
   -- wrong neighbor (JOB.md attempt 2). d = (p+149) negation > 0.
-  local m23 = roundDivByPow2(M, -p - 149)
+  local m23 = roundDivByPow2(sig, -p - 149)
   if m23 >= (1 << 23) then
     return (s << 31) | (1 << 23)
   end
@@ -195,40 +195,40 @@ M.methods = {
   -- group, finite only. No conversion beyond Go's float32 rounding of the double.
   serializeFloat = {
     checkValue = function(value) checkFloat(value) end,
-    write = function(stream, value)
+    write = function(s, value)
       local bits = float32Bits(value)
-      if not floatBitsAreFinite(bits) then return stream:_fail(NON_FINITE_FLOAT) end
-      return stream:_writeBits(bits, 32)
+      if not floatBitsAreFinite(bits) then return s:_fail(NON_FINITE_FLOAT) end
+      return s:_writeBits(bits, 32)
     end,
-    read = function(stream)
-      local bits = stream:_readBits(32)
+    read = function(s)
+      local bits = s:_readBits(32)
       if bits == nil then return false end
-      if not floatBitsAreFinite(bits) then return stream:_fail(NON_FINITE_FLOAT) end
+      if not floatBitsAreFinite(bits) then return s:_fail(NON_FINITE_FLOAT) end
       return true, float32FromBits(bits)
     end,
-    measure = function(stream, value)
-      if not floatBitsAreFinite(float32Bits(value)) then return stream:_fail(NON_FINITE_FLOAT) end
-      return stream:_measure(32)
+    measure = function(s, value)
+      if not floatBitsAreFinite(float32Bits(value)) then return s:_fail(NON_FINITE_FLOAT) end
+      return s:_measure(32)
     end,
   },
   -- STANDARD.md, double: the 64 bits, one 64-bit group (low 32 first), finite
   -- only.
   serializeDouble = {
     checkValue = function(value) checkFloat(value) end,
-    write = function(stream, value)
+    write = function(s, value)
       local bits = doubleBits(value)
-      if not doubleBitsAreFinite(bits) then return stream:_fail(NON_FINITE_FLOAT) end
-      return stream:_writeBits(bits, 64)
+      if not doubleBitsAreFinite(bits) then return s:_fail(NON_FINITE_FLOAT) end
+      return s:_writeBits(bits, 64)
     end,
-    read = function(stream)
-      local bits = stream:_readBits(64)
+    read = function(s)
+      local bits = s:_readBits(64)
       if bits == nil then return false end
-      if not doubleBitsAreFinite(bits) then return stream:_fail(NON_FINITE_FLOAT) end
+      if not doubleBitsAreFinite(bits) then return s:_fail(NON_FINITE_FLOAT) end
       return true, string.unpack("<d", string.pack("<i8", bits))
     end,
-    measure = function(stream, value)
-      if not doubleBitsAreFinite(doubleBits(value)) then return stream:_fail(NON_FINITE_FLOAT) end
-      return stream:_measure(64)
+    measure = function(s, value)
+      if not doubleBitsAreFinite(doubleBits(value)) then return s:_fail(NON_FINITE_FLOAT) end
+      return s:_measure(64)
     end,
   },
 }

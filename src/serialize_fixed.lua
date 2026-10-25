@@ -23,7 +23,8 @@ local stream = require("serialize_stream")
 local VALUE_OUT_OF_RANGE = stream.Refusal.ValueOutOfRange
 local PAST_END = stream.Refusal.PastEnd
 
-local PANIC_FIXED_PARAMS = "serialize: fixed point requires integer bits >= 1, fraction bits >= 0, a Q format that fits the storage width, and min <= max"
+local PANIC_FIXED_PARAMS = "serialize: fixed point requires integer bits >= 1, fraction bits >= 0, "
+  .. "a Q format that fits the storage width, and min <= max"
 local PANIC_FIXED_BOUNDS = "serialize: fixed point bounds in whole units do not fit the Q format"
 
 local math_type = math.type
@@ -87,7 +88,7 @@ end
 -- STANDARD.md, fixed: num raw (scaled) bounds and the bit count, in the unsigned
 -- 64-bit domain (serialize.go fixedPointParams64). The raw range may be wider than
 -- 2^63, so the span arithmetic wraps.
-local function fixed64Params(integerBits, fractionBits, min, max)
+local function fixed64Params(fractionBits, min, max)
   local rawMin = min << fractionBits
   local rawMax = max << fractionBits
   local rawRange = rawMax - rawMin
@@ -98,7 +99,7 @@ end
 -- STANDARD.md, fixed: the wide 128-bit counterpart (serialize.go
 -- fixedPointParams128). The raw offset math runs in the unsigned 128-bit domain.
 -- A degenerate range (min == max) costs zero bits on every storage width.
-local function fixed128Params(integerBits, fractionBits, min, max)
+local function fixed128Params(fractionBits, min, max)
   local rawMin = U.lsh(I.from64(min), fractionBits)
   local rawMax = U.lsh(I.from64(max), fractionBits)
   local rawRange = U.sub(rawMax, rawMin)
@@ -157,7 +158,7 @@ local fixed = {
   -- (serialize.go WriteStream.SerializeFixed64/128).
   write = function(s, value, integerBits, fractionBits, min, max)
     if integerBits + fractionBits <= 64 then
-      local rawMin, rawRange, numBits = fixed64Params(integerBits, fractionBits, min, max)
+      local rawMin, rawRange, numBits = fixed64Params(fractionBits, min, max)
       local offset = value - rawMin
       if math.ult(rawRange, offset) then
         return s:_fail(VALUE_OUT_OF_RANGE)
@@ -165,7 +166,7 @@ local fixed = {
       if numBits == 0 then return true end
       return s:_writeBits(offset, numBits)
     end
-    local rawMin, rawRange, numBits = fixed128Params(integerBits, fractionBits, min, max)
+    local rawMin, rawRange, numBits = fixed128Params(fractionBits, min, max)
     local offset = U.sub({ lo = value.lo, hi = value.hi }, rawMin)
     if U.cmp(offset, rawRange) > 0 then
       return s:_fail(VALUE_OUT_OF_RANGE)
@@ -181,7 +182,7 @@ local fixed = {
   -- clamp (serialize.go ReadStream.SerializeFixed64/128).
   read = function(s, integerBits, fractionBits, min, max)
     if integerBits + fractionBits <= 64 then
-      local rawMin, rawRange, numBits = fixed64Params(integerBits, fractionBits, min, max)
+      local rawMin, rawRange, numBits = fixed64Params(fractionBits, min, max)
       if numBits == 0 then return true, rawMin end
       local offset = s:_readBits(numBits)
       if offset == nil then return false end
@@ -190,7 +191,7 @@ local fixed = {
       end
       return true, rawMin + offset
     end
-    local rawMin, rawRange, numBits = fixed128Params(integerBits, fractionBits, min, max)
+    local rawMin, rawRange, numBits = fixed128Params(fractionBits, min, max)
     if numBits == 0 then return true, { lo = rawMin.lo, hi = rawMin.hi } end
     local offset = readGroups128(s, numBits)
     if offset == nil then return false end
@@ -202,14 +203,14 @@ local fixed = {
   end,
   measure = function(s, value, integerBits, fractionBits, min, max)
     if integerBits + fractionBits <= 64 then
-      local rawMin, rawRange, numBits = fixed64Params(integerBits, fractionBits, min, max)
+      local rawMin, rawRange, numBits = fixed64Params(fractionBits, min, max)
       local offset = value - rawMin
       if math.ult(rawRange, offset) then
         return s:_fail(VALUE_OUT_OF_RANGE)
       end
       return s:_measure(numBits)
     end
-    local rawMin, rawRange, numBits = fixed128Params(integerBits, fractionBits, min, max)
+    local rawMin, rawRange, numBits = fixed128Params(fractionBits, min, max)
     local offset = U.sub({ lo = value.lo, hi = value.hi }, rawMin)
     if U.cmp(offset, rawRange) > 0 then
       return s:_fail(VALUE_OUT_OF_RANGE)

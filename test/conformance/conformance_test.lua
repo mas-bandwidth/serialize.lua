@@ -153,11 +153,11 @@ local function parseVectorsText(content, path)
   for line in (content .. "\n"):gmatch("([^\n]*)\n") do
     lineNo = lineNo + 1
     local where = path .. ":" .. lineNo
-    if line:sub(1, 1) == "#" then
-      -- a comment, at the start of a line only
-    elseif line:match("^%s*$") then
+    -- a "#" at the start of a line is a comment and is skipped; it does not
+    -- end the record, a blank line does
+    if line:match("^%s*$") then
       cur = nil
-    else
+    elseif line:sub(1, 1) ~= "#" then
       local key, rest = line:match("^(%S+)%s*(.-)%s*$")
       check(KNOWN_KEYS[key], where .. ": unknown key " .. tostring(key))
       if key == "operation" then

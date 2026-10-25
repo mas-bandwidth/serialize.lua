@@ -20,7 +20,6 @@ local floatmod = require("serialize_float")
 local WriteStream = serialize.WriteStream
 local ReadStream = serialize.ReadStream
 
-local fround = floatmod.fround
 local float32Bits = floatmod.float32Bits
 local float32FromBits = floatmod.float32FromBits
 
@@ -182,9 +181,8 @@ local blk = f:read("*a")
 f:close()
 
 for line in (blk .. "\n"):gmatch("([^\r\n]+)\r?\n") do
-  if line == "" then
-    -- skip
-  elseif line == "END" then
+  -- the pattern never yields an empty line, so every line is END or an op
+  if line == "END" then
     if mode == "write" then
       s:flush()
       io.write("HEX " .. hex(s:data()) .. "\n")
@@ -210,9 +208,9 @@ for line in (blk .. "\n"):gmatch("([^\r\n]+)\r?\n") do
       for a in (rest .. " "):gmatch("(%S+)%s*") do
         args[#args + 1] = a
       end
-      if mode == "read-failed" or (mode == "read" and s:error() ~= nil) then
-        -- terminal stream: later ops are no-ops, report the refusal index
-      else
+      -- a terminal stream (read-failed, or a read whose stream holds an error)
+      -- runs no later op: they are no-ops, and the refusal index is reported
+      if mode ~= "read-failed" and not (mode == "read" and s:error() ~= nil) then
         local ok, holder = op(args)
         if mode == "read" then
           if ok then
