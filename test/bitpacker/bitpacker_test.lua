@@ -44,10 +44,6 @@ local function oracle(fields)
   return string.char(table.unpack(bytes)), total
 end
 
-local function masked(value, bits)
-  return value & ((1 << bits) - 1)
-end
-
 local function writePrefix(w, bits)
   local rem = bits
   while rem > 0 do

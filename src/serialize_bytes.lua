@@ -117,7 +117,7 @@ methods.serializeBytes = {
     if data == nil then return false end
     return true, data
   end,
-  measure = function(s, value, numBytes)
+  measure = function(s, _value, numBytes)
     if not s:serializeAlign() then return false end
     return s:_measure(numBytes * 8)
   end,
@@ -128,7 +128,7 @@ methods.serializeBytes = {
 -- terminator is not transmitted; the reader appends it.
 methods.serializeString = {
   check = checkBufferSize,
-  checkValue = function(value, bufferSize)
+  checkValue = function(value, _bufferSize)
     if type(value) ~= "string" then
       error("serialize: serializeString takes a string value", 3)
     end

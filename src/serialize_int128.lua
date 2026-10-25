@@ -412,7 +412,7 @@ local uint128 = {
     if hi == nil then return false end
     return true, { lo = lo, hi = hi }
   end,
-  measure = function(s, value)
+  measure = function(s, _value)
     return s:_measure(128)
   end,
 }

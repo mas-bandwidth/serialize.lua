@@ -35,7 +35,8 @@ local VALUE_OUT_OF_RANGE = stream.Refusal.ValueOutOfRange
 local NON_FINITE_FLOAT = stream.Refusal.NonFiniteFloat
 local PANIC_FLOAT_PARAMS = "serialize: compressed float requires min < max and resolution > 0"
 local PANIC_DECODE = "serialize: compressed float declaration's top decode min + delta must be finite in float32"
-local PANIC_PRECOMPUTED = "serialize: precomputed compressed float constants must be exactly what CompressedFloatParams derives"
+local PANIC_PRECOMPUTED = "serialize: precomputed compressed float constants must be exactly what "
+  .. "CompressedFloatParams derives"
 
 local pack = string.pack
 local unpack = string.unpack
@@ -244,11 +245,11 @@ local compressed = {
     return decode(s, iv, maxInt, delta, mn)
   end,
   -- serialize.go MeasureStream.SerializeCompressedFloat32: the wire width.
-  measure = function(s, value, min, max, resolution)
+  measure = function(s, _value, min, max, resolution)
     local mn = roundNumber(min, "min")
     local mx = roundNumber(max, "max")
     local rs = roundNumber(resolution, "resolution")
-    local maxInt, bitsN, delta = derive(mn, mx, rs)
+    local _, bitsN = derive(mn, mx, rs)
     return s:_measure(bitsN)
   end,
 }
@@ -259,7 +260,7 @@ local precomputed = {
   -- panicPrecomputedFloat (DESIGN.md (e)). delta must be exactly a float32.
   check = function(maxIntegerValue, bitsN, delta, min)
     local dl = roundNumber(delta, "delta")
-    local mn = roundNumber(min, "min")
+    roundNumber(min, "min")
     if math_type(maxIntegerValue) ~= "integer" or math_type(bitsN) ~= "integer" then
       error(PANIC_PRECOMPUTED, 0)
     end
@@ -296,7 +297,7 @@ local precomputed = {
     if iv > maxIntegerValue then return s:_fail(VALUE_OUT_OF_RANGE) end
     return decode(s, iv, maxIntegerValue, dl, mn)
   end,
-  measure = function(s, value, maxIntegerValue, bitsN, delta, min)
+  measure = function(s, _value, _maxIntegerValue, bitsN, _delta, _min)
     return s:_measure(bitsN)
   end,
 }

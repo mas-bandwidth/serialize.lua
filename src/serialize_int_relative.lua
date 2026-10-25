@@ -70,7 +70,7 @@ end
 -- The value check is over the Go int32 type, not the operation's non-negative
 -- domain (DESIGN.md (c), (h)): a negative current is inside the type and the
 -- write/measure arm latches it as ValueOutOfRange, as serialize.go does.
-methods.checkValue = function(previous, current)
+methods.checkValue = function(_previous, current)
   checkDomain(current, PANIC_INT_RELATIVE_CURRENT, INT32_MIN)
 end
 

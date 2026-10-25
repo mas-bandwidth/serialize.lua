@@ -23,6 +23,15 @@ jobs:
       - name: Fetch and build the pinned interpreter
         run: make dist-lua
 
+      - name: Fetch and build the pinned linter (luacheck)
+        run: make dist-luacheck
+
+      - name: Lint (luacheck, zero warnings)
+        run: make lint
+
+      - name: Lint negative control (a planted unused variable and global must be refused)
+        run: make lint-neg
+
       - name: Set up Go for fuzzing
         if: hashFiles('fuzz/go.mod') != ''
         uses: actions/setup-go@v5

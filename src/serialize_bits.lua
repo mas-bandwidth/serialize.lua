@@ -41,7 +41,7 @@ local function armRead(stream, bits)
   return true, v
 end
 
-local function armMeasure(stream, value, bits)
+local function armMeasure(stream, _value, bits)
   return stream:_measure(bits)
 end
 
