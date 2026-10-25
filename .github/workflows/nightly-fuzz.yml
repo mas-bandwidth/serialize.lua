@@ -1,0 +1,93 @@
+name: nightly fuzz
+
+# A functional test, nightly: the extended run of the differential fuzz
+# (fuzz/differential_test.go, the Lua port against serialize.go v2). ci.yml runs
+# the same harness on every push as a gate, one round of 2000 programs from a
+# fixed seed; this job runs rounds for `duration` seconds from a seed drawn
+# fresh each run, the counterpart of mas-bandwidth/serialize's nightly libFuzzer
+# run. The seed is printed before the run and written to the step summary, and
+# a red night reproduces with the `reproduce:` line the test prints.
+#
+# A generator-driven differential has no corpus to carry across nights: the
+# seed is the whole state of a run, and a fresh seed each night is the search.
+# On a failure, every failing program, its bytes and the Lua driver's batch
+# files are uploaded as an artifact named after the seed.
+#
+# Then the negative control: `make fuzz-neg` (-widen-int, the Go writer one bit
+# wider than the Lua side) runs on the same seed and must go red, by the bytes
+# differing; a harness that passes it is blind, and the job is red.
+
+on:
+  schedule:
+    - cron: '20 5 * * *'   # every day at 05:20 UTC
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Fuzz duration in seconds'
+        default: '3600'
+        required: false
+
+jobs:
+  fuzz:
+    name: differential fuzz (extended) and its negative control
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      DURATION: ${{ inputs.duration || '3600' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
+
+      - name: Derive the interpreter cache key from the Makefile pin
+        run: |
+          SHA="$(sed -n 's/^LUA_SHA256[[:space:]]*:= //p' Makefile)"
+          echo "LUA_CACHE_KEY=dist-$SHA" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4
+        with:
+          path: dist
+          key: ${{ env.LUA_CACHE_KEY }}
+
+      - name: Fetch and build the pinned interpreter
+        run: make dist-lua
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e   # v7
+        with:
+          go-version-file: fuzz/go.mod
+          cache: false
+
+      - name: Draw this run's seed
+        run: |
+          case "$DURATION" in ''|*[!0-9]*) echo "duration must be a whole number of seconds, got \"$DURATION\""; exit 1;; esac
+          SEED=$(od -An -N8 -tu8 /dev/urandom | tr -d ' ')
+          echo "SEED=$SEED" >> "$GITHUB_ENV"
+          echo "seed $SEED, duration ${DURATION}s"
+          echo "nightly fuzz: seed \`$SEED\`, duration ${DURATION}s" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fuzz (differential against serialize.go, extended)
+        run: make fuzz FUZZ_TIMEOUT=0 FUZZ_FLAGS="-seed=$SEED -duration=${DURATION}s -failures-dir=$GITHUB_WORKSPACE/fuzz-failures"
+
+      - name: Upload failing programs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7
+        with:
+          name: fuzz-failures-seed-${{ env.SEED }}
+          path: fuzz-failures/
+          if-no-files-found: ignore
+
+      - name: Negative control - make fuzz-neg must go red, by the bytes differing
+        if: always() && env.SEED != ''
+        run: |
+          log="$RUNNER_TEMP/fuzz-neg.log"
+          if make fuzz-neg FUZZ_FLAGS="-seed=$SEED" > "$log" 2>&1; then
+            cat "$log"
+            echo "negative control FAIL: make fuzz-neg passed; the harness did not see a one-bit writer divergence"
+            exit 1
+          fi
+          if ! grep -q 'bytes differ' "$log"; then
+            cat "$log"
+            echo "negative control FAIL: make fuzz-neg went red, but not by the bytes differing"
+            exit 1
+          fi
+          grep -m1 'bytes differ' "$log"
+          echo "negative control: make fuzz-neg went red by the bytes differing, as required"
