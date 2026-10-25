@@ -19,6 +19,7 @@
     exists, calling one raises "serialize: <name> not implemented".
 ]]
 
+local plantedUnused = 1 -- reversed witness for make lint; reverted in the next commit
 local stream = require("serialize_stream")
 local lazy = stream.lazy
 
