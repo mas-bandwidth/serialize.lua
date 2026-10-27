@@ -45,7 +45,7 @@ local function writeAccepted(method, value, what)
 end
 
 function TestSerializeFloat()
-  local counts = { ["conformance/float.txt"] = 22, ["conformance/double.txt"] = 22 }
+  local counts = { ["conformance/float.txt"] = 24, ["conformance/double.txt"] = 27 }
   for path, n in pairs(counts) do
     local records = C.parseVectors(path)
     check(#records == n, path .. ": expected " .. n .. " records, parsed " .. #records)

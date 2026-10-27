@@ -12,9 +12,10 @@ and the corpus is [conformance/](conformance/) with its negative controls in
 [conformance-controls/](conformance-controls/); STANDARD.md, IMPLEMENTING.md and
 both directories are vendored VERBATIM from
 [mas-bandwidth/serialize](https://github.com/mas-bandwidth/serialize) at tag
-`v2.0.1` (commit `b812b75cc0a75dd925af74103ab1f155b9431ac1`: the object
-read-terminality fix, format 2.0, STANDARD.md unchanged since the format 2.0
-release), by `tools/revendor.sh v2.0.1`, and CI diffs them against the tag on
+`v2.1.0` (commit `884bc3098c9619d67308d9c6b5cdf38593d98b69`: standard
+2.1, format 2.0 — the `rejected` refusal reason, IMPLEMENTING.md's uniform
+rules U1–U16, and the `reject` step), by `tools/revendor.sh v2.1.0`, and CI
+diffs them against the tag on
 every run. Where STANDARD.md is silent,
 [serialize.go](https://github.com/mas-bandwidth/serialize.go) `v2.0.0` (module
 `github.com/mas-bandwidth/serialize.go/v2`) is the reference for behaviour
@@ -62,6 +63,7 @@ exists, so a row added here is a row the skeleton must carry.
 | `serialize.Refusal.InvalidUtf8` | serialize_stream.lua (design) | `ErrInvalidUTF8`, `"invalid_utf8"` |
 | `serialize.Refusal.EmbeddedNul` | serialize_stream.lua (design) | `ErrEmbeddedNul`, `"embedded_nul"` |
 | `serialize.Refusal.NonCanonical` | serialize_stream.lua (design) | `ErrNonCanonical`, `"non_canonical"` |
+| `serialize.Refusal.Rejected` | serialize_stream.lua (design) | `ErrRejected`, `"rejected"`: the caller's own refusal (STANDARD.md 2.1; IMPLEMENTING.md U2) |
 | `serialize.WriteStream.new(capacity)` | serialize_stream.lua (design) | `NewWriteStream(buffer)` |
 | `serialize.ReadStream.new(data)` | serialize_stream.lua (design) | `NewReadStream(data)` |
 | `serialize.MeasureStream.new()` | serialize_stream.lua (design) | `NewMeasureStream()` |
@@ -150,6 +152,7 @@ ReadStream, M MeasureStream.
 | `stream:serializeString(holder, bufferSize)` | W R M | `SerializeString` | serialize_bytes.lua (strings) |
 | `stream:serializeAlign()` | W R M | `SerializeAlign` | serialize_stream.lua (design) |
 | `stream:serializeObject(object)` | W R M | `SerializeObject` | serialize_stream.lua (design) |
+| `stream:reject()` | R | `Reject`: the caller refuses the read as `rejected` and gets false (W and M: raises, read only; IMPLEMENTING.md U2) | serialize_stream.lua (design) |
 | `stream:serializeEnd()` | W R M | `SerializeEnd`: a packet reader reads it after the top-level object (R: `trailing_data`, then `nonzero_padding`; W and M: nothing) | serialize_stream.lua (design) |
 | `stream:alignBits()` | W R M | `AlignBits` (M: always 7) | serialize_stream.lua (design) |
 | `stream:bitsProcessed()` | W R M | `BitsProcessed` | serialize_stream.lua (design) |
@@ -238,11 +241,13 @@ ReadStream, never straight to a BitReader.
 12. **A failing object gives a kind, not an error value**: serialize.go's
     `Serializer` returns any `error` and the stream latches it; Lua has no
     error values, so `object:serialize(stream)` returns `false` and,
-    optionally, a kind (any non-nil value, latched as given, as Go latches
-    any error). An object that fails without giving one latches
-    `value_out_of_range`, the reason serialize.go uses for a value its reader
-    refuses. An object that returns `true` after a primitive inside it
-    latched still fails the call (serialize.go returns `s.err`).
+    optionally, a kind. A kind from the closed list (`serialize.Refusal`)
+    is latched as given; an object that fails without one, or with one
+    outside the list, latches `rejected` (STANDARD.md 2.1, "Refusal reasons";
+    IMPLEMENTING.md U2), so a refused stream never reports none. Through the
+    one latch, so a reason a primitive inside the object latched first is
+    kept. An object that returns `true` after a primitive inside it latched
+    still fails the call (serialize.go returns `s.err`).
 
 ## (b) BIT ORDER AND ENDIANNESS
 

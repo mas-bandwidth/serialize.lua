@@ -35,19 +35,26 @@ local Refusal = {
   InvalidUtf8 = "invalid_utf8",
   EmbeddedNul = "embedded_nul",
   NonCanonical = "non_canonical",
+  Rejected = "rejected",
 }
 M.Refusal = Refusal
 
+-- The closed list as a set: a caller's refusal with a kind outside it is
+-- latched as `rejected` (STANDARD.md, "Refusal reasons").
+local REASONS = {}
+for _, r in pairs(Refusal) do REASONS[r] = true end
+
 local PAST_END = Refusal.PastEnd
-local VALUE_OUT_OF_RANGE = Refusal.ValueOutOfRange
 local NONZERO_PADDING = Refusal.NonzeroPadding
 local TRAILING_DATA = Refusal.TrailingData
+local REJECTED = Refusal.Rejected
 
 -- API misuse raises, naming the rule, where serialize.go panics (DESIGN.md (g)).
 -- These messages are serialize.go's own panic strings.
 local PANIC_BUFFER_BYTES = "serialize: bit writer buffer size must be a multiple of 8 bytes"
 local PANIC_NOT_ALIGNED = "serialize: byte array serialization requires byte alignment"
 local PANIC_PRIMITIVE_BITS = "serialize: a stream primitive takes bits in [1,64]"
+local PANIC_REJECT_READ_ONLY = "serialize: reject is read only; a write or measure has nothing to refuse"
 
 local type, error, require, setmetatable, mathtype = type, error, require, setmetatable, math.type
 local package = package
@@ -271,29 +278,38 @@ local function objectMisuse()
   error("serialize: serializeObject takes an object with a serialize(self, stream) method", 3)
 end
 
--- STANDARD.md, object: composition, no bytes of its own. serialize.go: a
--- failure the object returns is latched, and an error latched inside it fails
--- the call even when the object returns true. The object returns false and,
--- optionally, its own kind (any non-nil value, latched as given, as Go latches
--- any error); with none, ValueOutOfRange (DESIGN.md (a), deviation 12).
-local function serializeObject(self, object)
-  if not isObject(object) then objectMisuse() end
-  if self._err ~= nil then return false end
-  local ok, kind = object:serialize(self)
-  if ok ~= true then
-    if self._err == nil then
-      self._err = kind or VALUE_OUT_OF_RANGE
-    end
-    return false
-  end
-  return self._err == nil
-end
-
+-- THE LATCH: the first reason wins; a later refusal on a failed stream is an
+-- echo and keeps it (STANDARD.md, "Refusal reasons").
 local function fail(self, kind)
   if self._err == nil then
     self._err = kind
   end
   return false
+end
+
+-- STANDARD.md, object: composition, no bytes of its own. An error latched
+-- inside the object fails the call even when the object returns true. An
+-- object that returns false is the caller refusing (STANDARD.md, "Refusal
+-- reasons"; IMPLEMENTING.md U2): it may give a kind from the closed list,
+-- latched as given; with none, or one outside the list, the stream latches
+-- `rejected`. Through the same latch, so a reason a primitive inside the object
+-- latched first is kept (DESIGN.md (a), deviation 12).
+local function serializeObject(self, object)
+  if not isObject(object) then objectMisuse() end
+  if self._err ~= nil then return false end
+  local ok, kind = object:serialize(self)
+  if ok ~= true then
+    fail(self, REASONS[kind] and kind or REJECTED)
+    return false
+  end
+  return self._err == nil
+end
+
+-- STANDARD.md, "Refusal reasons"; IMPLEMENTING.md U2: the caller's own refusal
+-- of a value whose bytes were well formed. Read only: on a write or a measure
+-- there is nothing to refuse, and calling it there is caller error.
+local function rejectReadOnly()
+  error(PANIC_REJECT_READ_ONLY, 2)
 end
 
 local function common(class)
@@ -335,6 +351,7 @@ function WriteStream:reset(capacity) writeReset(self, capacity) end
 function WriteStream:isWriting() return true end
 function WriteStream:isReading() return false end
 function WriteStream:alignBits() return (8 - self._bits % 8) % 8 end
+WriteStream.reject = rejectReadOnly
 
 local function writer(self)
   local w = self._writer
@@ -429,6 +446,13 @@ function ReadStream:isWriting() return false end
 function ReadStream:isReading() return true end
 function ReadStream:alignBits() return (8 - self._bits % 8) % 8 end
 
+-- stream:reject(): refuses the read as `rejected` and returns false, through
+-- the latch every wire refusal takes, so a reason latched first is kept and
+-- the stream is terminal from here on (IMPLEMENTING.md U2).
+function ReadStream:reject()
+  return fail(self, REJECTED)
+end
+
 local function reader(self)
   local r = self._reader
   if r == nil then
@@ -522,6 +546,7 @@ function MeasureStream:isWriting() return true end
 function MeasureStream:isReading() return false end
 -- The conservative worst case: every align is charged 7 bits.
 function MeasureStream:alignBits() return 7 end
+MeasureStream.reject = rejectReadOnly
 
 -- THE MEASURE PRIMITIVE (DESIGN.md (h)): adds bits (any non-negative integer).
 function MeasureStream:_measure(bits)
