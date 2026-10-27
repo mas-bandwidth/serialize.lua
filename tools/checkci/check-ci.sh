@@ -12,13 +12,8 @@ CI_FILE="${1:-.github/workflows/ci.yml}"
 LUA_VERSION=$(sed -n 's/^LUA_VERSION[[:space:]]*:= //p' Makefile)
 LUA_SHA256=$(sed -n 's/^LUA_SHA256[[:space:]]*:= //p' Makefile)
 LUA_URL="https://www.lua.org/ftp/lua-${LUA_VERSION}.tar.gz"
-# The corpus pin (DESIGN.md, "The sources"): the first full commit sha of
-# mas-bandwidth/serialize that DESIGN.md names in backticks.
-CORPUS_PIN=$(grep -oE '`[0-9a-f]{40}`' DESIGN.md | head -n1 | tr -d '`')
-if [ -z "$CORPUS_PIN" ]; then
-  echo "check-ci FAIL: DESIGN.md names no corpus commit (a backticked 40-hex sha)"
-  exit 1
-fi
+# The corpus pin (DESIGN.md, "The sources"): mas-bandwidth/serialize's tag.
+CORPUS_TAG=$(grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' DESIGN.md | head -n1)
 
 FORK_GUARD="    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository"
 
@@ -47,8 +42,8 @@ check_ci() {
     echo "check-ci FAIL: ci.yml does not run \"make test\""
     f=1
   fi
-  if ! grep -qF "$CORPUS_PIN" "$ci"; then
-    echo "check-ci FAIL: ci.yml does not pin the corpus commit $CORPUS_PIN from DESIGN.md"
+  if ! grep -qF "$CORPUS_TAG" "$ci"; then
+    echo "check-ci FAIL: ci.yml does not pin the corpus tag $CORPUS_TAG from DESIGN.md"
     f=1
   fi
   # THE FORK GUARD: the repository is public and its runners are the fleet's

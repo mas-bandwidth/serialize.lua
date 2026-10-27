@@ -810,6 +810,18 @@ local CONTROLS = {
         .. "    return true, (d >= 9223372036854775807.0) and math.maxinteger or math.tointeger(d)" } },
   },
   {
+    -- serializeObject consults the latch on entry and again on exit, and
+    -- either alone refuses an empty object on a failed stream, so the rule
+    -- lives in both places and the control deletes both.
+    name = "object-terminal", rule = "a nested object on a failed stream refuses before its callback runs",
+    patches = { { "src/serialize_stream.lua",
+      "  if not isObject(object) then objectMisuse() end\n  if self._err ~= nil then return false end",
+      "  if not isObject(object) then objectMisuse() end\n  if self._err ~= nil and false then return false end" },
+      { "src/serialize_stream.lua",
+      "    return false\n  end\n  return self._err == nil\nend",
+      "    return false\n  end\n  return true\nend" } },
+  },
+  {
     name = "wrong-reason", rule = "a refusal names the rule that refused it",
     patches = { { "src/serialize_bytes.lua",
       "then return s:_fail(EMBEDDED_NUL) end",

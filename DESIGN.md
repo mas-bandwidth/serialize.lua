@@ -11,12 +11,11 @@ directory, and needs to decide nothing that is decided here.
 and the corpus is [conformance/](conformance/) with its negative controls in
 [conformance-controls/](conformance-controls/); STANDARD.md, IMPLEMENTING.md and
 both directories are vendored VERBATIM from
-[mas-bandwidth/serialize](https://github.com/mas-bandwidth/serialize) at commit
-`3617d3606db9c5686018d6568f0aa761869083c5` (serialize main after `3f40cb5f`,
-the object read-terminality fix: the 2.0.1 corpus, format 2.0, STANDARD.md
-unchanged since tag `v2.0.0`), by
-`tools/revendor.sh 3617d3606db9c5686018d6568f0aa761869083c5`, and CI diffs
-them against that commit on every run. Where STANDARD.md is silent,
+[mas-bandwidth/serialize](https://github.com/mas-bandwidth/serialize) at tag
+`v2.0.1` (commit `b812b75cc0a75dd925af74103ab1f155b9431ac1`: the object
+read-terminality fix, format 2.0, STANDARD.md unchanged since the format 2.0
+release), by `tools/revendor.sh v2.0.1`, and CI diffs them against the tag on
+every run. Where STANDARD.md is silent,
 [serialize.go](https://github.com/mas-bandwidth/serialize.go) `v2.0.0` (module
 `github.com/mas-bandwidth/serialize.go/v2`) is the reference for behaviour
 (IMPLEMENTING.md, "Sources"), and the fuzz oracle;

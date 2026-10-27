@@ -53,24 +53,20 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64, fleet, serialize]
     env:
-      SERIALIZE_REF: 3617d3606db9c5686018d6568f0aa761869083c5
+      SERIALIZE_TAG: v2.0.1
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check out mas-bandwidth/serialize at the pinned commit
-        run: |
-          rm -rf "$RUNNER_TEMP/serialize"
-          git init --quiet "$RUNNER_TEMP/serialize"
-          git -C "$RUNNER_TEMP/serialize" fetch --quiet --depth 1 https://github.com/mas-bandwidth/serialize.git "$SERIALIZE_REF"
-          git -c advice.detachedHead=false -C "$RUNNER_TEMP/serialize" checkout --quiet FETCH_HEAD
+      - name: Check out mas-bandwidth/serialize at the pinned tag
+        run: rm -rf "$RUNNER_TEMP/serialize" && git clone --quiet --depth 1 --branch "$SERIALIZE_TAG" https://github.com/mas-bandwidth/serialize.git "$RUNNER_TEMP/serialize"
 
-      - name: conformance/ matches the pinned commit
+      - name: conformance/ matches the pinned release
         run: diff -ru "$RUNNER_TEMP/serialize"/conformance conformance
 
-      - name: conformance-controls/ matches the pinned commit
+      - name: conformance-controls/ matches the pinned release
         run: diff -ru "$RUNNER_TEMP/serialize"/conformance-controls conformance-controls
 
-      - name: STANDARD.md and IMPLEMENTING.md match the pinned commit
+      - name: STANDARD.md and IMPLEMENTING.md match the pinned release
         run: |
           diff -u "$RUNNER_TEMP/serialize"/STANDARD.md STANDARD.md
           diff -u "$RUNNER_TEMP/serialize"/IMPLEMENTING.md IMPLEMENTING.md
