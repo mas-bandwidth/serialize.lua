@@ -44,7 +44,7 @@ function TestSerializeBits()
     ["conformance/bool.txt"] = 5,
     ["conformance/uint128.txt"] = 13,
     ["conformance/align.txt"] = 10,
-    ["conformance/object.txt"] = 7,
+    ["conformance/object.txt"] = 12,
   }
   for path, n in pairs(want) do
     check(runCorpusFile(path) == n, path .. ": record count changed")

@@ -262,6 +262,10 @@ local function parseStep(op, words)
     want(1); st.bufferSize = parseInt64(words[1])
   elseif op == "object" then
     want(1); st.count = parseInt64(words[1])
+  elseif op == "reject" then
+    -- the caller's own refusal (sequence.txt, the step spellings): not a wire
+    -- operation, so it is a step and never a single-operation record
+    want(0)
   else
     error("no runner for operation " .. tostring(op), 0)
   end
@@ -394,23 +398,33 @@ local function call(s, st, holder)
   error("no runner for operation " .. tostring(op), 0)
 end
 
--- readTree(s, nodes, out): reads every node, never stopping at a refusal, and
--- records per step: ok, the bits it consumed, and its destination. An object
--- runs its children through serializeObject.
-local function readTree(s, nodes, out)
+-- readTree(s, nodes, out, inObject): reads every node, never stopping at a
+-- wire refusal, and records per step: ok, the bits it consumed, and its
+-- destination. An object runs its children through serializeObject. A `reject`
+-- step (sequence.txt) is the caller refusing: at the top level through the
+-- stream's reject entry point; inside an object, the object's serialize
+-- function returning false there without refusing on its own, which the object
+-- must latch as `rejected`.
+local function readTree(s, nodes, out, inObject)
   local all = true
   for _, st in ipairs(nodes) do
     local before = s:bitsProcessed()
     local r = { step = st }
     out[st.index] = r
     if st.op == "object" then
-      local inner = true
       local obj = { serialize = function(_, stream)
-        inner = readTree(stream, st.children, out)
-        return inner
+        return readTree(stream, st.children, out, true)
       end }
       r.ok = s:serializeObject(obj)
       r.holder = { value = SENTINEL }
+    elseif st.op == "reject" then
+      r.holder = { value = SENTINEL }
+      if inObject then
+        r.ok = false
+        r.consumed = 0
+        return false
+      end
+      r.ok = s:reject()
     else
       r.holder = { value = SENTINEL }
       r.ok = call(s, st, r.holder)
@@ -432,6 +446,7 @@ end
 -- a read decoded.
 local function writeTree(s, nodes, values)
   for _, st in ipairs(nodes) do
+    check(st.op ~= "reject", "a reject step appears only in refused vectors")
     if st.op == "object" then
       local obj = { serialize = function(_, stream) return writeTree(stream, st.children, values) end }
       if not s:serializeObject(obj) then return false end
@@ -466,7 +481,7 @@ end
 -- matches(st, actual, token): does the decoded value equal the stated one?
 local function matches(st, actual, token, kind)
   local op = st.op
-  if op == "align" or op == "end" or op == "object" then
+  if op == "align" or op == "end" or op == "object" or op == "reject" then
     return token == "-" or token == "0"
   end
   if token == "-" then return false end
@@ -531,6 +546,26 @@ local function runWriterInput(rec, steps)
     .. "], want [" .. hexOf(rec.bytes) .. "]")
 end
 
+-- checkCallbackRefuses(rec): over each refused object.txt vector's bytes, a
+-- nested object whose callback returns false on its own, with nothing refused
+-- inside it, latches `rejected` (STANDARD.md, "Refusal reasons"), and the
+-- stream is terminal after it: a further read, and a further object, refuse
+-- without consuming, writing or running the callback, and keep the reason.
+local function checkCallbackRefuses(rec)
+  local rs = L.serialize.ReadStream.new(rec.bytes)
+  check(rs:serializeObject({ serialize = function() return false end }) == false,
+    rec.name .. ": an object whose callback returns false was accepted")
+  check(rs:error() == "rejected", rec.name .. ": an object callback's own refusal latched "
+    .. tostring(rs:error()) .. ", not rejected")
+  local probe = { value = SENTINEL }
+  check(rs:serializeBits(probe, 8) == false and probe.value == SENTINEL and rs:bitsProcessed() == 0,
+    rec.name .. ": a read after the callback's refusal was not refused cleanly")
+  local called = false
+  check(rs:serializeObject({ serialize = function() called = true; return true end }) == false and not called,
+    rec.name .. ": an object after the callback's refusal was accepted or ran its callback")
+  check(rs:error() == "rejected", rec.name .. ": the echoes changed rejected to " .. tostring(rs:error()))
+end
+
 local function runRecord(rec)
   local steps, single = buildSteps(rec)
   local tree = treeOf(steps)
@@ -577,6 +612,7 @@ local function runRecord(rec)
     check(rs:serializeEnd() == false, rec.name .. ": an end on the failed stream was accepted")
     check(rs:bitsProcessed() == before, rec.name .. ": the failed stream consumed bits")
     check(rs:error() == rec.reason, rec.name .. ": the echoes changed the first reason to " .. tostring(rs:error()))
+    if rec.file:match("object%.txt$") then checkCallbackRefuses(rec) end
     return
   end
 
@@ -820,6 +856,22 @@ local CONTROLS = {
       { "src/serialize_stream.lua",
       "    return false\n  end\n  return self._err == nil\nend",
       "    return false\n  end\n  return true\nend" } },
+  },
+  {
+    -- The 2.0 object latch: a callback's own refusal poisons nothing and
+    -- records no reason, so the refused stream reports none.
+    name = "object-latch-rejected", rule = "a nested object that refuses on its own latches rejected",
+    patches = { { "src/serialize_stream.lua",
+      "    fail(self, REASONS[kind] and kind or REJECTED)\n    return false",
+      "    return false" } },
+  },
+  {
+    -- reject refuses under a wire rule's name: the stream still fails and
+    -- stays failed; only the reason is wrong.
+    name = "reject-reason", rule = "the reject entry point refuses as rejected",
+    patches = { { "src/serialize_stream.lua",
+      "  return fail(self, REJECTED)\n",
+      "  return fail(self, Refusal.ValueOutOfRange)\n" } },
   },
   {
     name = "wrong-reason", rule = "a refusal names the rule that refused it",
