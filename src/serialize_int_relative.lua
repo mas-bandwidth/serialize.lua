@@ -63,8 +63,14 @@ end
 
 local methods = {}
 
+-- A declaration check returns the rule's message, or nil (serialize_stream.lua,
+-- M.method: write and measure raise it, a read refuses value_out_of_range;
+-- IMPLEMENTING.md U16: previous is judged before anything narrows it).
 methods.check = function(previous)
-  checkDomain(previous, PANIC_INT_RELATIVE_DOMAIN)
+  if mathtype(previous) ~= "integer" or previous < 0 or previous > RANGE_MAX then
+    return PANIC_INT_RELATIVE_DOMAIN
+  end
+  return nil
 end
 
 -- The value check is over the Go int32 type, not the operation's non-negative

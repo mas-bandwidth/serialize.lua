@@ -347,9 +347,14 @@ local function readGroups128(s, numBits)
 end
 
 local int128 = {
+  -- A declaration check returns the rule's message, or nil (serialize_stream.lua,
+  -- M.method; IMPLEMENTING.md U16).
   check = function(min, max)
-    if not (checkPair(min) and checkPair(max)) then pairMisuse("serializeInt128") end
-    if I.cmp(min, max) > 0 then error(PANIC_MIN_MAX, 0) end
+    if not (checkPair(min) and checkPair(max)) then
+      return "serialize: serializeInt128 takes a { lo, hi } value"
+    end
+    if I.cmp(min, max) > 0 then return PANIC_MIN_MAX end
+    return nil
   end,
   checkValue = function(value)
     if not checkPair(value) then pairMisuse("serializeInt128") end

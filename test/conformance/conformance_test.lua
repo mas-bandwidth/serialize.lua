@@ -778,8 +778,12 @@ local CONTROLS = {
     -- bits and would otherwise succeed.
     name = "fixed-degenerate-terminal", rule = "every read consults the failure state, zero bit reads included",
     patches = { { "src/serialize_stream.lua",
-      "        if a.check then a.check(...) end\n        if self._err ~= nil then return false end\n        local ok, value = a.read(self, ...)",
-      "        if a.check then a.check(...) end\n        if self._err ~= nil and name ~= \"serializeFixed\" then return false end\n        local ok, value = a.read(self, ...)" } },
+      "        if self._err ~= nil then return false end\n"
+        .. "        if type(holder) ~= \"table\" then return fail(self, VALUE_OUT_OF_RANGE) end\n"
+        .. "        if a.check and a.check(...) ~= nil",
+      "        if self._err ~= nil and name ~= \"serializeFixed\" then return false end\n"
+        .. "        if type(holder) ~= \"table\" then return fail(self, VALUE_OUT_OF_RANGE) end\n"
+        .. "        if a.check and a.check(...) ~= nil" } },
   },
   {
     name = "float-finite", rule = "a float read refuses NaN and the infinities",
@@ -851,8 +855,8 @@ local CONTROLS = {
     -- lives in both places and the control deletes both.
     name = "object-terminal", rule = "a nested object on a failed stream refuses before its callback runs",
     patches = { { "src/serialize_stream.lua",
-      "  if not isObject(object) then objectMisuse() end\n  if self._err ~= nil then return false end",
-      "  if not isObject(object) then objectMisuse() end\n  if self._err ~= nil and false then return false end" },
+      "  if self._err ~= nil then return false end\n  if not isObject(object) then return fail(self, VALUE_OUT_OF_RANGE) end",
+      "  if self._err ~= nil and false then return false end\n  if not isObject(object) then return fail(self, VALUE_OUT_OF_RANGE) end" },
       { "src/serialize_stream.lua",
       "    return false\n  end\n  return self._err == nil\nend",
       "    return false\n  end\n  return true\nend" } },
@@ -876,8 +880,8 @@ local CONTROLS = {
   {
     name = "wrong-reason", rule = "a refusal names the rule that refused it",
     patches = { { "src/serialize_bytes.lua",
-      "then return s:_fail(EMBEDDED_NUL) end",
-      "then return s:_fail(INVALID_UTF8) end" } },
+      "if data:find(\"\\0\", 1, true) then return s:_fail(EMBEDDED_NUL) end",
+      "if data:find(\"\\0\", 1, true) then return s:_fail(INVALID_UTF8) end" } },
   },
 }
 

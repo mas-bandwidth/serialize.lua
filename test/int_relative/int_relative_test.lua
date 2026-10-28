@@ -138,16 +138,22 @@ function TestSerializeIntRelative()
     end
   end
 
-  -- a previous outside the domain is API misuse on every stream
+  -- a previous outside the domain is API misuse: write and measure raise; a
+  -- read refuses value_out_of_range, never a raise (IMPLEMENTING.md U7, U16)
   do
     local want = "serialize: int relative previous must be in [0,2147483647]"
     raises(function() serialize.WriteStream.new(8):serializeIntRelative(-1, { value = 5 }) end, want)
-    raises(function() serialize.ReadStream.new(""):serializeIntRelative(-1, { value = 0 }) end, want)
     raises(function() serialize.MeasureStream.new():serializeIntRelative(-1, { value = 5 }) end, want)
+    local rs = serialize.ReadStream.new("\1")
+    local rh = { value = 0 }
+    check(rs:serializeIntRelative(-1, rh) == false and rs:error() == ValueOutOfRange,
+      "a previous outside the domain on read refuses value_out_of_range")
+    check(rh.value == 0 and rs:bitsProcessed() == 0, "the refused read consumed bits or wrote the holder")
   end
 
   -- a current inside the int32 type but outside the operation's domain is not
-  -- misuse: write and measure latch value_out_of_range and write nothing
+  -- misuse: the write latches value_out_of_range and writes nothing; the measure
+  -- refuses and latches nothing (IMPLEMENTING.md U6)
   -- (serialize.go WriteStream/MeasureStream SerializeIntRelative; DESIGN.md (c), (h)).
   do
     for _, current in ipairs({ -1, -5, -2147483648 }) do
@@ -165,7 +171,7 @@ function TestSerializeIntRelative()
       local mh = { value = current }
       check(ms:serializeIntRelative(100, mh) == false,
         "negative current " .. current .. " measure succeeded")
-      check(ms:error() == ValueOutOfRange,
+      check(ms:error() == nil,
         "negative current " .. current .. " measure latched " .. tostring(ms:error()))
       check(ms:bitsProcessed() == 0,
         "negative current " .. current .. " measure consumed bits")

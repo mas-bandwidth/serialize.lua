@@ -157,14 +157,14 @@ function TestSmoke()
   check(ws:serializeAlign() == false, "align refuses on a failed write stream")
   raises(function() serialize.WriteStream.new(7) end, "serialize: bit writer buffer size must be a multiple of 8 bytes")
 
-  -- the measure side counts, and its latch holds too
+  -- the measure side counts, and refuses nothing (IMPLEMENTING.md U6)
   local ms = serialize.MeasureStream.new()
   check(probe.measure(ms, { value = 0 }, 13) == true and ms:bitsProcessed() == 13, "measure counts bits")
   check(ms:alignBits() == 7 and ms:serializeAlign() and ms:bitsProcessed() == 20, "measure charges an align 7 bits")
   check(ms:bytesProcessed() == 3, "measure rounds up to a byte")
-  check(ms:serializeObject({ serialize = function() return false end }) == false, "an object that fails fails the stream")
-  check(ms:error() == serialize.Refusal.Rejected, "an object failing without a kind latches rejected")
-  check(probe.measure(ms, { value = 0 }, 1) == false and ms:bitsProcessed() == 20, "a failed measure counts nothing")
+  check(ms:serializeObject({ serialize = function() return false end }) == false, "an object that fails fails the call")
+  check(ms:error() == nil, "a measure latches nothing, got " .. tostring(ms:error()))
+  check(probe.measure(ms, { value = 0 }, 1) == true and ms:bitsProcessed() == 21, "the measure keeps counting")
 
   -- the arm contract guard: an arm that lies about its result raises by name
   local liar = S.method(PROBE, "serializeLiar", 1)

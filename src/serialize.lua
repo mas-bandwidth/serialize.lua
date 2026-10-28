@@ -27,6 +27,10 @@ local M = {}
 -- The refusal reasons a stream latches (STANDARD.md, "Refusal reasons").
 M.Refusal = stream.Refusal
 
+-- The refusal-name function (IMPLEMENTING.md U14): nil is "none", a reason
+-- from the closed list is its own name.
+M.refusalName = stream.refusalName
+
 -- The three streams (DESIGN.md (a), (g)): serialize_stream.lua.
 M.WriteStream = stream.WriteStream
 M.ReadStream = stream.ReadStream
