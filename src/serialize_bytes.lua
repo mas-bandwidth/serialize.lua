@@ -25,6 +25,7 @@ local Refusal = stream.Refusal
 local VALUE_OUT_OF_RANGE = Refusal.ValueOutOfRange
 local INVALID_UTF8 = Refusal.InvalidUtf8
 local EMBEDDED_NUL = Refusal.EmbeddedNul
+local PAST_END = Refusal.PastEnd
 
 local type, error = type, error
 local mathtype = math.type
@@ -33,16 +34,29 @@ local mathtype = math.type
 -- misuse, before anything is touched, on a healthy stream and a failed one alike.
 local PANIC_BUFFER_SIZE = "serialize: string buffer size must be in [1,1<<31)"
 
+-- A declaration check returns the rule's message, or nil (serialize_stream.lua,
+-- M.method: write and measure raise it; a read refuses value_out_of_range,
+-- IMPLEMENTING.md U7: a negative byte count or a buffer size below 1 on read is
+-- a refusal, never a raise).
 local function checkBufferSize(bufferSize)
   if mathtype(bufferSize) ~= "integer" or bufferSize < 1 or bufferSize >= (1 << 31) then
-    error(PANIC_BUFFER_SIZE, 3)
+    return PANIC_BUFFER_SIZE
   end
+  return nil
 end
 
 local function checkBytesCount(numBytes)
   if mathtype(numBytes) ~= "integer" or numBytes < 0 then
-    error("serialize: a byte count is a non-negative integer", 3)
+    return "serialize: a byte count is a non-negative integer"
   end
+  return nil
+end
+
+-- IMPLEMENTING.md U10: a write checks room for the whole operation, the
+-- length field, the align's padding and the payload, before writing any of it.
+local function room(s, fieldBits, payloadBytes)
+  local at = s._bits + fieldBits
+  return at + (8 - at % 8) % 8 + payloadBytes * 8 <= s._numBits
 end
 
 -- bits_required(0, max): the fewest bits that hold every value in [0, max],
@@ -108,6 +122,7 @@ methods.serializeBytes = {
     end
   end,
   write = function(s, value)
+    if not room(s, 0, #value) then return s:_fail(PAST_END) end
     if not s:serializeAlign() then return false end
     return s:_writeBytes(value)
   end,
@@ -135,7 +150,12 @@ methods.serializeString = {
   end,
   write = function(s, value, bufferSize)
     if #value >= bufferSize then return s:_fail(VALUE_OUT_OF_RANGE) end
+    -- IMPLEMENTING.md U3, U4: the writer sends the caller's bytes as given, so
+    -- it checks them as the reader will: a NUL first, then UTF-8 (Table 3-7).
+    if value:find("\0", 1, true) then return s:_fail(EMBEDDED_NUL) end
+    if not validUTF8(value) then return s:_fail(INVALID_UTF8) end
     local w = bitsRequired0toMax(bufferSize - 1)
+    if not room(s, w, #value) then return s:_fail(PAST_END) end
     if w > 0 then
       if not s:_writeBits(#value, w) then return false end
     end
@@ -168,6 +188,10 @@ methods.serializeString = {
     return true, data
   end,
   measure = function(s, value, bufferSize)
+    -- the writer's checks; a measure latches nothing (U6), it returns false
+    if #value >= bufferSize or value:find("\0", 1, true) or not validUTF8(value) then
+      return s:_fail(VALUE_OUT_OF_RANGE)
+    end
     local w = bitsRequired0toMax(bufferSize - 1)
     if w > 0 then
       if not s:_measure(w) then return false end

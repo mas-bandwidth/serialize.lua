@@ -69,20 +69,22 @@ end
 -- fractionBits <= 64 is fixed64, == 128 is fixed128, anything else is misuse
 -- (serialize.go panicFixedParams). Bounds outside the format's capacity raise
 -- panicFixedBounds (serialize.go fixedPointParams64/128).
+-- Returns the rule's message, or nil (serialize_stream.lua, M.method:
+-- write and measure raise it, a read refuses value_out_of_range; U16).
 local function validateParams(integerBits, fractionBits, min, max)
   if math_type(integerBits) ~= "integer" or math_type(fractionBits) ~= "integer"
     or math_type(min) ~= "integer" or math_type(max) ~= "integer" then
-    error(PANIC_FIXED_PARAMS, 0)
+    return PANIC_FIXED_PARAMS
   end
   local total = integerBits + fractionBits
   if integerBits < 1 or fractionBits < 0 or (total > 64 and total ~= 128) or min > max then
-    error(PANIC_FIXED_PARAMS, 0)
+    return PANIC_FIXED_PARAMS
   end
   local minRep, maxRep = fixedCapacity(integerBits, min < 0)
   if min < minRep or max > maxRep then
-    error(PANIC_FIXED_BOUNDS, 0)
+    return PANIC_FIXED_BOUNDS
   end
-  return total
+  return nil
 end
 
 -- STANDARD.md, fixed: num raw (scaled) bounds and the bit count, in the unsigned
@@ -138,9 +140,7 @@ end
 
 local fixed = {
   -- DESIGN.md (h): check runs before the latch check, on every stream.
-  check = function(integerBits, fractionBits, min, max)
-    validateParams(integerBits, fractionBits, min, max)
-  end,
+  check = validateParams,
   checkValue = function(value, integerBits, fractionBits)
     if integerBits + fractionBits <= 64 then
       if math_type(value) ~= "integer" then

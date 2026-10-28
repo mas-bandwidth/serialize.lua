@@ -162,6 +162,22 @@ local function isFinite(x)
   return x == x and x ~= math.huge and x ~= -math.huge
 end
 
+-- numberError(x, what): roundNumber's rule as a message, or nil, for the
+-- declaration checks, which never raise (serialize_stream.lua, M.method).
+local function numberError(x, what)
+  if type(x) ~= "number" then
+    return "serialize: " .. what .. " takes a number"
+  end
+  if not isFinite(fround(x)) then
+    return "serialize: " .. what .. " must be a finite float32"
+  end
+  return nil
+end
+
+-- STANDARD.md, compressed_float: values is clamped to [1, 4294967040], so
+-- max_integer_value lies there (IMPLEMENTING.md U16).
+local MAX_INTEGER_VALUE = 4294967040
+
 -- STANDARD.md, compressed_float, "The decode must be finite": a declaration
 -- whose top integer decodes past FLT_MAX (min + delta, rounded once in
 -- float32) is non-conforming as a whole, so the WRITER raises on it, as on any
@@ -200,11 +216,15 @@ end
 local compressed = {
   -- serialize.go CompressedFloatParams panics: min must be < max and resolution
   -- > 0, after each is rounded to float32 (DESIGN.md (e)).
+  -- A declaration check returns the rule's message, or nil (U16).
   check = function(min, max, resolution)
-    local mn = roundNumber(min, "min")
-    local mx = roundNumber(max, "max")
-    local rs = roundNumber(resolution, "resolution")
-    if not (mn < mx) or not (rs > 0) then error(PANIC_FLOAT_PARAMS, 0) end
+    local e = numberError(min, "min") or numberError(max, "max")
+      or numberError(resolution, "resolution")
+    if e ~= nil then return e end
+    if not (fround(min) < fround(max)) or not (fround(resolution) > 0) then
+      return PANIC_FLOAT_PARAMS
+    end
+    return nil
   end,
   checkValue = function(value)
     roundNumber(value, "value")
@@ -258,16 +278,26 @@ local precomputed = {
   -- serialize.go validateCompressedFloatConstants: the precomputed constants
   -- must be exactly what compressedFloatParams derives; anything else raises
   -- panicPrecomputedFloat (DESIGN.md (e)). delta must be exactly a float32.
+  -- maxIntegerValue lies in [1, 4294967040], the uint32 range the
+  -- derivation clamps to, before bitsRequired sees it (IMPLEMENTING.md U16;
+  -- AUDIT-LEDGER 2026-10-27, lua M: 2^32 passed with bits 0 and 2^32 + 5 with
+  -- bits 3, because bitsRequired works over 32 bits). Returns the rule's
+  -- message, or nil.
   check = function(maxIntegerValue, bitsN, delta, min)
-    local dl = roundNumber(delta, "delta")
-    roundNumber(min, "min")
+    local e = numberError(delta, "delta") or numberError(min, "min")
+    if e ~= nil then return e end
     if math_type(maxIntegerValue) ~= "integer" or math_type(bitsN) ~= "integer" then
-      error(PANIC_PRECOMPUTED, 0)
+      return PANIC_PRECOMPUTED
     end
-    if maxIntegerValue == 0 or bitsN ~= bits.api.bitsRequired(0, maxIntegerValue)
-      or not (dl > 0) or dl - dl ~= 0 or dl ~= fround(dl) then
-      error(PANIC_PRECOMPUTED, 0)
+    if maxIntegerValue < 1 or maxIntegerValue > MAX_INTEGER_VALUE then
+      return PANIC_PRECOMPUTED
     end
+    local dl = fround(delta)
+    if bitsN ~= bits.api.bitsRequired(0, maxIntegerValue)
+      or not (dl > 0) or dl ~= delta then
+      return PANIC_PRECOMPUTED
+    end
+    return nil
   end,
   checkValue = function(value)
     roundNumber(value, "value")

@@ -23,8 +23,8 @@ local function fromDoubleBits(bits)
   return (string.unpack("<d", string.pack("<i8", bits)))
 end
 
--- writeRefused(method, value): the writer and the measure latch
--- non_finite_float, write nothing and count nothing.
+-- writeRefused(method, value): the writer latches non_finite_float and writes
+-- nothing; the measure refuses and latches nothing (IMPLEMENTING.md U6).
 local function writeRefused(method, value, what)
   local ws = serialize.WriteStream.new(8)
   local h = { value = value }
@@ -34,7 +34,7 @@ local function writeRefused(method, value, what)
   check(rawequal(h.value, value) or (h.value ~= h.value and value ~= value), what .. ": the holder changed")
   local ms = serialize.MeasureStream.new()
   check(ms[method](ms, { value = value }) == false, what .. ": the measure must refuse")
-  check(ms:error() == NON_FINITE, what .. ": the measure latched " .. tostring(ms:error()))
+  check(ms:error() == nil, what .. ": the measure latched " .. tostring(ms:error()))
 end
 
 local function writeAccepted(method, value, what)
