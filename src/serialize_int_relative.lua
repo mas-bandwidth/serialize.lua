@@ -28,7 +28,8 @@ local PANIC_INT_RELATIVE_CURRENT = "serialize: int relative current must be in [
 
 -- The int_relative domain is the non-negative int32 range (STANDARD.md int_relative).
 -- The operation's API type is the signed int32 (DESIGN.md (c)): a current inside
--- that type but outside the domain latches ValueOutOfRange in the write arm.
+-- that type but outside the domain traps in the write and measure arms
+-- (IMPLEMENTING.md U9).
 local INT32_MIN = -2147483648
 local RANGE_MAX = 2147483647
 
@@ -75,7 +76,7 @@ end
 
 -- The value check is over the Go int32 type, not the operation's non-negative
 -- domain (DESIGN.md (c), (h)): a negative current is inside the type and the
--- write/measure arm latches it as ValueOutOfRange, as serialize.go does.
+-- write/measure arm traps on it (IMPLEMENTING.md U9).
 methods.checkValue = function(_previous, current)
   checkDomain(current, PANIC_INT_RELATIVE_CURRENT, INT32_MIN)
 end

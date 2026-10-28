@@ -9,14 +9,14 @@
     The string family: serializeBytes and serializeString (DESIGN.md (h), card
     serialize-lua-strings). Wire rules cited by section of STANDARD.md: "bytes",
     "string". The writer is strict: it emits for every value exactly the bytes
-    serialize.go v2 emits, and where that writer's WriteStream refuses
-    (value_out_of_range, past_end) this port latches the same reason and writes
-    nothing for that call. Reads refuse every refusal
+    serialize.go v2 emits. Reads refuse every refusal
     STANDARD.md and serialize.go state, name the caller's destination untouched and
-    leave the stream terminal. No dependence on the int family: the length fields
-    are written with the stream's own bit primitives (serialize_int(length, 0,
-    bufferSize-1) is just an unsigned field whose width is bits_required(0,
-    bufferSize-1)).
+    leave the stream terminal. On a write or a measure, misuse (a string that
+    does not fit, holds a NUL or is not UTF-8; an operation past the end)
+    traps by IMPLEMENTING.md U9 and latches nothing. No dependence on the int
+    family: the length fields are written with the stream's own bit
+    primitives (serialize_int(length, 0, bufferSize-1) is just an unsigned
+    field whose width is bits_required(0, bufferSize-1)).
 ]]
 
 local stream = require("serialize_stream")
@@ -107,6 +107,17 @@ local function validUTF8(s)
   return true
 end
 
+-- IMPLEMENTING.md U3, U4, U9: the text checks a string write and a string
+-- measure both make (U6), each write misuse, so each traps (stream:_fail on a
+-- write or a measure stream is the trap; nothing is latched). The writer sends
+-- the caller's bytes as given, so it checks them as the reader will: the
+-- length, then a NUL, then UTF-8 (Table 3-7).
+local function checkText(s, value, bufferSize)
+  if #value >= bufferSize then s:_fail(VALUE_OUT_OF_RANGE) end
+  if value:find("\0", 1, true) then s:_fail(EMBEDDED_NUL) end
+  if not validUTF8(value) then s:_fail(INVALID_UTF8) end
+end
+
 local methods = {}
 
 -- serializeBytes: STANDARD.md "bytes": aligns first, then writes `count` raw
@@ -149,11 +160,7 @@ methods.serializeString = {
     end
   end,
   write = function(s, value, bufferSize)
-    if #value >= bufferSize then return s:_fail(VALUE_OUT_OF_RANGE) end
-    -- IMPLEMENTING.md U3, U4: the writer sends the caller's bytes as given, so
-    -- it checks them as the reader will: a NUL first, then UTF-8 (Table 3-7).
-    if value:find("\0", 1, true) then return s:_fail(EMBEDDED_NUL) end
-    if not validUTF8(value) then return s:_fail(INVALID_UTF8) end
+    checkText(s, value, bufferSize)
     local w = bitsRequired0toMax(bufferSize - 1)
     if not room(s, w, #value) then return s:_fail(PAST_END) end
     if w > 0 then
@@ -188,10 +195,8 @@ methods.serializeString = {
     return true, data
   end,
   measure = function(s, value, bufferSize)
-    -- the writer's checks; a measure latches nothing (U6), it returns false
-    if #value >= bufferSize or value:find("\0", 1, true) or not validUTF8(value) then
-      return s:_fail(VALUE_OUT_OF_RANGE)
-    end
+    -- the writer's checks, by the same trap; a measure latches nothing (U6)
+    checkText(s, value, bufferSize)
     local w = bitsRequired0toMax(bufferSize - 1)
     if w > 0 then
       if not s:_measure(w) then return false end

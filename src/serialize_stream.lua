@@ -42,10 +42,9 @@ end
 -- The refusal reasons (STANDARD.md, "Refusal reasons"): the closed list,
 -- spelled exactly as the standard spells them. A failed stream's error() is
 -- the FIRST refusal's reason; later refusals on that stream are its echoes and
--- keep it. A healthy stream's error() is nil. The write side latches the same
--- names where serialize.go's writer does: past_end for a write past the end of
--- the buffer, value_out_of_range for a value outside its range, and
--- non_finite_float for a float or double that is not finite.
+-- keep it. A healthy stream's error() is nil. These are a READER's reasons
+-- only (IMPLEMENTING.md U9): a write or a measure stream never latches one, so
+-- its error() is always nil. Write misuse traps instead (trapMisuse, below).
 local Refusal = {
   PastEnd = "past_end",
   ValueOutOfRange = "value_out_of_range",
@@ -85,6 +84,21 @@ local PANIC_BUFFER_BYTES = "serialize: bit writer buffer size must be a multiple
 local PANIC_NOT_ALIGNED = "serialize: byte array serialization requires byte alignment"
 local PANIC_PRIMITIVE_BITS = "serialize: a stream primitive takes bits in [1,64]"
 local PANIC_REJECT_READ_ONLY = "serialize: reject is read only; a write or measure has nothing to refuse"
+
+-- THE TRAP (IMPLEMENTING.md U9, "One write-misuse mechanism: the trap"). This
+-- port has no unchecked build, so it is a checked build always and traps in
+-- every run: Lua's error(), raised at the call, before any bit of the
+-- operation is written. Every write and measure misuse comes here: a value
+-- outside its range or bit width, a float, double or compressed_float that is
+-- not finite, text that is not well-formed UTF-8, holds a NUL or does not fit
+-- buffer_size - 1, and (write only) an operation that does not fit the room
+-- left. The message names the reader's reason for the same fault, but nothing
+-- is recorded: write misuse never latches, never returns false, and a later
+-- write emits exactly what it would have without it.
+local function trapMisuse(_self, kind)
+  error("serialize: write misuse (IMPLEMENTING.md U9): " .. tostring(kind), 0)
+end
+M.trapMisuse = trapMisuse
 
 local type, error, require, setmetatable, mathtype = type, error, require, setmetatable, math.type
 local package = package
@@ -155,9 +169,9 @@ local function arm(fam, name)
   return m
 end
 
--- The arm contract (DESIGN.md (h)): an arm returns true on success and false
--- only after it has latched an error on the stream. Anything else is a bug in
--- the family, raised by name rather than left to corrupt the latch.
+-- The read arm contract (DESIGN.md (h)): an arm returns true on success and
+-- false only after it has latched an error on the stream. Anything else is a
+-- bug in the family, raised by name rather than left to corrupt the latch.
 local function settle(stream, name, ok)
   if ok == true then
     if stream._err ~= nil then
@@ -177,11 +191,12 @@ local function holderMisuse(name)
   error("serialize: " .. name .. " takes a holder table { value = ... }", 3)
 end
 
--- The measure's settle (IMPLEMENTING.md U6): a measure refuses nothing, so an
--- arm may return false with nothing latched; anything but a boolean is a bug.
-local function settleMeasure(name, ok)
-  if ok == true or ok == false then return ok end
-  error("serialize: " .. name .. " arm must return a boolean", 0)
+-- The write and measure settle (IMPLEMENTING.md U6, U9): misuse traps inside
+-- the arm, so an arm that returns at all returns true; anything else is a bug
+-- in the family, raised by name.
+local function settleWrite(name, ok)
+  if ok == true then return true end
+  error("serialize: " .. name .. " write or measure arm must return true or trap", 0)
 end
 
 -- THE LATCH: the first reason wins; a later refusal on a failed stream is an
@@ -201,15 +216,15 @@ end
 -- message naming the rule when it is bad, nil when it is good; it never
 -- raises, so each stream applies its own mechanism (IMPLEMENTING.md U16).
 --
--- Write and measure, per call (DESIGN.md (g)):
+-- Write and measure, per call (DESIGN.md (g); IMPLEMENTING.md U6, U9: every
+-- misuse traps, and there is no failed state to check):
 --   1. the holder is a table, else raise;
 --   2. the family is loaded (lazily), else raise not implemented;
---   3. a bad declaration raises its message, on a healthy stream and a failed
---      one alike; the arm's checkValue runs over the same arguments with
---      holder.value in the holder's place (the type and domain checks of
---      DESIGN.md (c)) and raises on misuse;
---   4. a failed stream returns false, writing nothing;
---   5. the arm receives holder.value in the holder's place.
+--   3. a bad declaration raises its message; the arm's checkValue runs over
+--      the same arguments with holder.value in the holder's place (the type
+--      and domain checks of DESIGN.md (c)) and raises on misuse;
+--   4. the arm receives holder.value in the holder's place, and traps
+--      (trapMisuse) on a value its operation cannot carry.
 --
 -- Read, per call (IMPLEMENTING.md U7: a reader never traps):
 --   1. the family is loaded (lazily), else raise not implemented (absent code
@@ -240,8 +255,7 @@ function M.method(fam, name, holderIndex)
           if e ~= nil then error(e, 2) end
         end
         if a.checkValue then a.checkValue(holder.value, ...) end
-        if self._err ~= nil then return false end
-        return settle(self, name, a.write(self, holder.value, ...))
+        return settleWrite(name, a.write(self, holder.value, ...))
       end,
       read = function(self, holder, ...)
         local a = get()
@@ -263,7 +277,7 @@ function M.method(fam, name, holderIndex)
           if e ~= nil then error(e, 2) end
         end
         if a.checkValue then a.checkValue(holder.value, ...) end
-        return settleMeasure(name, a.measure(self, holder.value, ...))
+        return settleWrite(name, a.measure(self, holder.value, ...))
       end,
     }
   elseif holderIndex == 2 then
@@ -276,8 +290,7 @@ function M.method(fam, name, holderIndex)
           if e ~= nil then error(e, 2) end
         end
         if a.checkValue then a.checkValue(first, holder.value, ...) end
-        if self._err ~= nil then return false end
-        return settle(self, name, a.write(self, first, holder.value, ...))
+        return settleWrite(name, a.write(self, first, holder.value, ...))
       end,
       read = function(self, first, holder, ...)
         local a = get()
@@ -299,7 +312,7 @@ function M.method(fam, name, holderIndex)
           if e ~= nil then error(e, 2) end
         end
         if a.checkValue then a.checkValue(first, holder.value, ...) end
-        return settleMeasure(name, a.measure(self, first, holder.value, ...))
+        return settleWrite(name, a.measure(self, first, holder.value, ...))
       end,
     }
   end
@@ -364,18 +377,18 @@ local function readObject(self, object)
 end
 
 -- On a WRITE or a MEASURE there is nothing to refuse: an object that returns
--- false fails the call and latches nothing (IMPLEMENTING.md U6, U9; the
+-- false fails the call and records nothing (IMPLEMENTING.md U6, U9; the
 -- reference latches `rejected` on a read stream only).
 local function writeObject(self, object)
   if not isObject(object) then objectMisuse() end
-  if self._err ~= nil then return false end
-  if object:serialize(self) ~= true then return false end
-  return self._err == nil
+  return object:serialize(self) == true
 end
 
 -- STANDARD.md, "Refusal reasons"; IMPLEMENTING.md U2: the caller's own refusal
 -- of a value whose bytes were well formed. Read only: on a write or a measure
--- there is nothing to refuse, and calling it there is caller error.
+-- there is nothing to refuse, and calling it there is caller misuse, which
+-- traps in a checked build (U9); this port is always checked, so it raises in
+-- every run.
 local function rejectReadOnly()
   error(PANIC_REJECT_READ_ONLY, 2)
 end
@@ -397,14 +410,14 @@ local function common(class)
   -- STANDARD.md, General Conventions, "Bit index and alignment".
   function class:bitsProcessed() return self._bits end
   function class:bytesProcessed() return (self._bits + 7) // 8 end
-  class._fail = fail
+  class._fail = trapMisuse
   class.serializeObject = writeObject
   class.fail = failNothing
   return class
 end
 
 --------------------------------------------------------------------------------
--- WriteStream (DESIGN.md (g): the writer is strict).
+-- WriteStream (DESIGN.md (g): the writer is strict; misuse traps, U9).
 --------------------------------------------------------------------------------
 
 local WriteStream = common({})
@@ -440,13 +453,12 @@ local function writer(self)
 end
 
 -- THE WRITE PRIMITIVE (DESIGN.md (h)). bits in [1,64]; value is masked to bits.
--- The TOTAL width is checked against the capacity up front, so a refused wide
--- write puts nothing on the wire. bits > 32 go as the low 32 bits first, then
--- the bits - 32 high bits (STANDARD.md, bits).
+-- The TOTAL width is checked against the capacity up front, so a write that
+-- does not fit traps (U9, U10) with nothing on the wire. bits > 32 go as the
+-- low 32 bits first, then the bits - 32 high bits (STANDARD.md, bits).
 function WriteStream:_writeBits(value, bits)
-  if self._err ~= nil then return false end
   if mathtype(bits) ~= "integer" or bits < 1 or bits > 64 then error(PANIC_PRIMITIVE_BITS, 2) end
-  if self._bits + bits > self._numBits then return fail(self, PAST_END) end
+  if self._bits + bits > self._numBits then trapMisuse(self, PAST_END) end
   local w = writer(self)
   if bits <= 32 then
     w:writeBits(value & ((1 << bits) - 1), bits)
@@ -461,12 +473,11 @@ end
 -- The byte block primitive: the stream must already be aligned (the family
 -- aligns first, STANDARD.md, bytes); s is a Lua string.
 function WriteStream:_writeBytes(s)
-  if self._err ~= nil then return false end
   if self._bits % 8 ~= 0 then error(PANIC_NOT_ALIGNED, 2) end
   local n = #s
   if n == 0 then return true end
   -- compared in bytes, as serialize.go does, so a huge count cannot wrap the test
-  if n > (self._numBits - self._bits) // 8 then return fail(self, PAST_END) end
+  if n > (self._numBits - self._bits) // 8 then trapMisuse(self, PAST_END) end
   writer(self):writeBytes(s)
   self._bits = self._bits + n * 8
   return true
@@ -474,7 +485,6 @@ end
 
 -- STANDARD.md, align: zero bits to the next byte boundary; nothing when aligned.
 function WriteStream:serializeAlign()
-  if self._err ~= nil then return false end
   local n = (8 - self._bits % 8) % 8
   if n == 0 then return true end
   return self:_writeBits(0, n)
@@ -532,6 +542,7 @@ function ReadStream:alignBits() return (8 - self._bits % 8) % 8 end
 -- stream:reject(): refuses the read as `rejected` and returns false, through
 -- the latch every wire refusal takes, so a reason latched first is kept and
 -- the stream is terminal from here on (IMPLEMENTING.md U2).
+ReadStream._fail = fail
 function ReadStream:reject()
   return fail(self, REJECTED)
 end
@@ -639,14 +650,13 @@ function MeasureStream:isReading() return false end
 -- The conservative worst case: every align is charged 7 bits.
 function MeasureStream:alignBits() return 7 end
 MeasureStream.reject = rejectReadOnly
--- IMPLEMENTING.md U6: a measure refuses nothing. A family arm that refuses on
--- a measure (a value outside its range, a non-finite float) returns false and
--- latches nothing; error() on a measure is always nil.
-MeasureStream._fail = failNothing
+-- IMPLEMENTING.md U6: a measure refuses nothing. It makes every check a write
+-- makes (except room, which it does not have) by the same trap (U9), the
+-- _fail every class carries, and latches nothing; error() on a measure is
+-- always nil.
 
 -- THE MEASURE PRIMITIVE (DESIGN.md (h)): adds bits (any non-negative integer).
 function MeasureStream:_measure(bits)
-  if self._err ~= nil then return false end
   if mathtype(bits) ~= "integer" or bits < 0 then error("serialize: a measured width is a non-negative integer", 2) end
   self._bits = self._bits + bits
   return true

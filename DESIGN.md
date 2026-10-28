@@ -12,9 +12,10 @@ and the corpus is [conformance/](conformance/) with its negative controls in
 [conformance-controls/](conformance-controls/); STANDARD.md, IMPLEMENTING.md and
 both directories are vendored VERBATIM from
 [mas-bandwidth/serialize](https://github.com/mas-bandwidth/serialize) at tag
-`v2.1.0` (commit `884bc3098c9619d67308d9c6b5cdf38593d98b69`: standard
+`v2.1.1` (commit `bd3d67e23c8acc2c45eff69633dbe16c029a2cba`: standard
 2.1, format 2.0 — the `rejected` refusal reason, IMPLEMENTING.md's uniform
-rules U1–U16, and the `reject` step), by `tools/revendor.sh v2.1.0`, and CI
+rules U1–U16 with the 2.1.1 rulings on U3, U6, U9 and U15, and the `reject`
+step), by `tools/revendor.sh v2.1.1`, and CI
 diffs them against the tag on
 every run. Where STANDARD.md is silent,
 [serialize.go](https://github.com/mas-bandwidth/serialize.go) `v2.0.0` (module
@@ -44,10 +45,11 @@ Every type, function and stream method serialize.go v2 exports, in
 serialize.js's spelling (`src/index.js`, `src/streams.js`). A value travels in
 a HOLDER, `{ value = ... }`, exactly as serialize.js's ref objects: on write
 and measure `holder.value` is consumed; on read it is assigned on success and
-left unmodified on failure. Every serialize call returns a boolean. The first
-error latches on the stream; every later call fails, consumes nothing and
-writes nothing to its destination (STANDARD.md, Reader Obligations, "Failure
-is terminal"). `test/smoke` parses the two tables below and checks every name
+left unmodified on failure. Every serialize call returns a boolean. On a
+READ the first error latches on the stream; every later call fails, consumes
+nothing and writes nothing to its destination (STANDARD.md, Reader
+Obligations, "Failure is terminal"). On a WRITE or a MEASURE misuse is never
+latched: it traps, Lua's `error()`, at the call (IMPLEMENTING.md U9; (g)). `test/smoke` parses the two tables below and checks every name
 exists, so a row added here is a row the skeleton must carry.
 
 ### The entry: `local serialize = require("serialize")`
@@ -68,6 +70,7 @@ exists, so a row added here is a row the skeleton must carry.
 | `serialize.WriteStream.new(capacity)` | serialize_stream.lua (design) | `NewWriteStream(buffer)` |
 | `serialize.ReadStream.new(data)` | serialize_stream.lua (design) | `NewReadStream(data)`; data that is not a Lua string latches `value_out_of_range` at initialization (IMPLEMENTING.md U7) |
 | `serialize.MeasureStream.new()` | serialize_stream.lua (design) | `NewMeasureStream()` |
+| `serialize.copyString(source, destSize)` | serialize.lua (design) | `serialize_copy_string` (IMPLEMENTING.md U15): returns the bytes of `source` before its first NUL, cut to `destSize - 1` and backed off while the first byte left out is a continuation byte (10xxxxxx), so `serializeString` with `bufferSize = destSize` accepts a well-formed result. Lua strings are byte strings, so the rule applies to any bytes. `destSize` below 1 or not an integer, or a `source` that is not a string, is write misuse: the trap (U9) |
 | `serialize.Continue(stream, holder)` | serialize.lua (design) | `Continue(stream, more)` |
 | `serialize.Until(stream, holder)` | serialize.lua (design) | `Until(stream, done)` |
 | `serialize.BitWriter.new(capacity)` | serialize_bitpacker.lua (bitpacker) | `NewBitWriter(buffer)` |
@@ -153,13 +156,13 @@ ReadStream, M MeasureStream.
 | `stream:serializeString(holder, bufferSize)` | W R M | `SerializeString` | serialize_bytes.lua (strings) |
 | `stream:serializeAlign()` | W R M | `SerializeAlign` | serialize_stream.lua (design) |
 | `stream:serializeObject(object)` | W R M | `SerializeObject` | serialize_stream.lua (design) |
-| `stream:reject()` | R | `Reject`: the caller refuses the read as `rejected` and gets false (W and M: raises, read only; IMPLEMENTING.md U2) | serialize_stream.lua (design) |
-| `stream:fail(reason)` | W R M | `serialize_fail` (IMPLEMENTING.md U14): R latches a listed reason as given and nil or anything else as `rejected`, and returns false; W and M return false and record nothing (U6, U9) | serialize_stream.lua (design) |
+| `stream:reject()` | R | `Reject`: the caller refuses the read as `rejected` and gets false (W and M: caller misuse, the trap, in every run: this port is always checked; IMPLEMENTING.md U2, U9) | serialize_stream.lua (design) |
+| `stream:fail(reason)` | W R M | `serialize_fail` (IMPLEMENTING.md U14): R latches a listed reason as given and nil or anything else as `rejected`, and returns false; W and M return false, record nothing and never trap (U6, U9) | serialize_stream.lua (design) |
 | `stream:serializeEnd()` | W R M | `SerializeEnd`: a packet reader reads it after the top-level object (R: `trailing_data`, then `nonzero_padding`; W and M: a no-op returning true, IMPLEMENTING.md U12) | serialize_stream.lua (design) |
 | `stream:alignBits()` | W R M | `AlignBits` (M: always 7) | serialize_stream.lua (design) |
 | `stream:bitsProcessed()` | W R M | `BitsProcessed` | serialize_stream.lua (design) |
 | `stream:bytesProcessed()` | W R M | `BytesProcessed` | serialize_stream.lua (design) |
-| `stream:error()` | W R M | `Err`: nil, or the FIRST refusal's reason, spelled as STANDARD.md spells it (M: always nil, U6) | serialize_stream.lua (design) |
+| `stream:error()` | W R M | `Err`: nil, or the FIRST refusal's reason, spelled as STANDARD.md spells it (W and M: always nil; write misuse traps and never latches, U6, U9) | serialize_stream.lua (design) |
 | `stream:refusal()` | W R M | the refusal's name, `"none"` for no refusal (IMPLEMENTING.md U14) | serialize_stream.lua (design) |
 | `stream:ok()` | W R M | `Err() == nil` (serialize.js `ok`) | serialize_stream.lua (design) |
 | `stream:setContext(context)` | W R M | `SetContext` | serialize_stream.lua (design) |
@@ -222,11 +225,11 @@ ReadStream, never straight to a BitReader.
    STANDARD.md spells it (`"past_end"`, `"embedded_nul"`, ...), and
    `serialize.Refusal` names the eight in serialize.go's order. A Lua string
    compares by value, so a caller tests `s:error() == serialize.Refusal.PastEnd`.
-   The writer latches the same names where serialize.go's writer does:
-   `past_end` for a write past the buffer, `value_out_of_range` for a value
-   outside its range or over its bit width, `non_finite_float` for a float or
-   double that is not finite, `embedded_nul` and `invalid_utf8` for a string
-   the reader would refuse. A measure latches nothing (U6).
+   They are a READER's reasons only (IMPLEMENTING.md U9): a write or a
+   measure stream never latches one. Write misuse traps instead, and the
+   trap's message names the reason the reader would give for the same fault:
+   `serialize: write misuse (IMPLEMENTING.md U9): past_end`, and likewise
+   `value_out_of_range`, `non_finite_float`, `embedded_nul`, `invalid_utf8`.
 8. **One `serializeFixed`** covers serialize.go's `SerializeFixed64` and
    `SerializeFixed128` (serialize.js's one name): integerBits + fractionBits
    ≤ 64 is Fixed64 with an integer holder, = 128 is Fixed128 with a
@@ -234,8 +237,10 @@ ReadStream, never straight to a BitReader.
    `panicFixedParams`. serialize.js's extra restriction to storage widths 8,
    16, 32, 64 and 128 is not adopted: serialize.go accepts any total up to 64.
 9. **No checked/production split**: serialize.js forks its writer at load on
-   `NODE_ENV`; Lua has one build, and the writer here is always the strict
-   one (g).
+   `NODE_ENV`; Lua has one build, and it is a checked build always
+   (IMPLEMENTING.md U9: "An implementation with no unchecked build is a
+   checked build, always"), so every write and measure misuse traps in every
+   run, `reject` on a write or a measure included (g).
 10. **Names serialize.js lacks** (`serializeObject`,
     `serializeCompressedFloatPrecomputed`, `compressedFloatParams`,
     `setContext`, `context`, `signedToUnsigned`, `unsignedToSigned`, the
@@ -327,8 +332,8 @@ native 64-bit integer subtype (`math.maxinteger` is `9223372036854775807`,
   `serializeFloat` or `serializeDouble` holder holds a float: `1.0`, never
   `1`). serialize.go's type system refuses these at compile time; the strict
   writer refuses them at the call (the arm's `checkValue`, (h)). A value INSIDE its Go type
-  but outside the call's `[min,max]` is not misuse: it latches
-  `value_out_of_range`, exactly where serialize.go does (g).
+  but outside the call's `[min,max]` is write misuse too, caught by the arm
+  rather than `checkValue`: it traps, naming `value_out_of_range` (U9, (g)).
 - Bit counts and byte counts are integers; arithmetic on them never meets
   2^53, because they are integers, not floats.
 
@@ -404,7 +409,9 @@ does.
 - `fround(x)`, the float32 rounding of a double, is the write rule followed
   by the read rule. The float card (serialize_float.lua) owns `fround`,
   `float32Bits` and `float32FromBits`, exported on its module table for the
-  compressed-float card; they are not entry names.
+  compressed-float card; they are not entry names. They are language
+  necessities in IMPLEMENTING.md U15's sense (Lua has no float32), and they
+  are INTERNAL: (f) says which names are, and promises nothing about them.
 - **compressed_float's parameters are float32**, as serialize.go's
   `min, max, resolution float32` and `*float32` value are: the arm rounds
   `min`, `max`, `resolution` and the written value with `fround` first,
@@ -420,9 +427,12 @@ does.
   refuses a decode that is not finite as `non_finite_float`, destination
   untouched, whatever the declaration. The WRITER, on both entry points,
   raises on a declaration whose top decode `fround(min + delta)` is not
-  finite (an overflowing `delta` included), even for a value that decodes
-  finite: the declaration is non-conforming as a whole. The measure and the
-  reader never raise on it.
+  finite, even for a value that decodes finite: the declaration is
+  non-conforming as a whole. So does a declaration whose `delta = fround(max -
+  min)` or `fround(delta / resolution)` is not finite: write misuse
+  (IMPLEMENTING.md, "The check model"), trapped, never clamped into
+  `maxIntegerValue`. The measure makes the same checks by the same trap
+  (U6). The reader never raises on any of them.
 - **compressed_float's arithmetic is float32**, emulated by `fround` after
   EVERY operation (STANDARD.md, compressed_float: "This arithmetic is
   `float32`, and the two roundings are part of the format"): `delta = fround(max - min)`, `values = fround(delta / resolution)`, on write
@@ -453,6 +463,15 @@ this library.
 - No native module is loaded: the library requires nothing but its own files,
   and uses only the interpreter's built-in `string`, `table`, `math` and
   `utf8` (tests add `io`).
+- **The public surface is `require("serialize")`** (IMPLEMENTING.md U15,
+  "Exports beyond the reference operations"): the names of the (a) tables,
+  and nothing else. Lua cannot hide a module, so every `serialize_*` module
+  is reachable by `require`, and every name on one (`serialize_stream`'s
+  `family`, `lazy`, `method`, `DISPATCH`, `trapMisuse`; `serialize_float`'s
+  `fround`, `float32Bits`, `float32FromBits`, `floatBitsAreFinite`,
+  `doubleBitsAreFinite`; each family's `methods` and `api`; the `_`-prefixed
+  stream primitives) is INTERNAL: this port promises nothing about them and
+  may change them in any release.
 - The basenames `serialize` and `serialize_*` are this library's. schema's Lua
   leg vendors these files into a generated unit's directory unchanged, and a
   schema file whose basename collides with one is refused there by name
@@ -465,15 +484,28 @@ this library.
 
 ## (g) WRITER AND READER
 
-**The writer is STRICT.** It produces exactly serialize.go v2's bytes. It
-latches `value_out_of_range`, `past_end` or `non_finite_float` where
-serialize.go's WriteStream returns them, and it RAISES, naming the rule, where serialize.go
-panics on API misuse; the raise messages are serialize.go's panic strings
-(`serialize: bits must be in [1,32]`, `serialize: min must not be greater than max`, and the rest of `serialize.go`'s `panic*` constants). Misuse raises on a
-healthy stream and on a failed one alike, as in serialize.go, where the panic
-precedes the latch check. Beyond serialize.go, the type checks of (c) raise.
-STANDARD.md's doctrine ("Writes assume trusted data") puts the cost of these
-checks on the writer, and a Lua build has no release mode to strip them from.
+**The writer is STRICT, and write misuse TRAPS** (IMPLEMENTING.md U9, "One
+write-misuse mechanism: the trap"). It produces exactly serialize.go v2's
+bytes. This port has no unchecked build, so it is a checked build always, and
+its trap is Lua's `error()`, raised at the call, before any bit of the
+operation is written, in every run. Every write misuse traps: a value outside
+its range or bit width, a `float`, `double` or `compressed_float` value that
+is not finite, a bad declaration, text that is not well-formed UTF-8, holds a
+NUL or does not fit `bufferSize - 1`, a write buffer that is not a multiple
+of 8 bytes, and an operation that does not fit the room left. A declaration's
+raise message is serialize.go's panic string (`serialize: bits must be in
+[1,32]`, `serialize: min must not be greater than max`, and the rest of
+`serialize.go`'s `panic*` constants); a value's is `serialize: write misuse
+(IMPLEMENTING.md U9): <reason>`, naming the reason a reader would give.
+Beyond serialize.go, the type checks of (c) raise. **Write misuse never
+latches**: a write stream has no refusal state, `error()` on it is always nil,
+nothing returns false, and a write after a trap emits exactly what it would
+have without it. `stream:fail()` on a write returns false, records nothing and
+never traps; an object whose serialize returns false on a write makes
+`serializeObject` return false and records nothing; `stream:reject()` on a
+write traps. STANDARD.md's doctrine ("Writes assume trusted data") puts the
+cost of these checks on the writer, and a Lua build has no release mode to
+strip them from.
 
 **Caller misuse, by stream** (IMPLEMENTING.md U7, U9, U16). Every arm's
 `check` validates the caller's declaration (bit counts, bounds, Q formats,
@@ -486,9 +518,10 @@ not a table, or a `serializeObject` argument that is not an object refuses as
 `value_out_of_range` before any bit moves. The check costs the read path what
 it cost before: the same comparisons, one branch on the result. A value that
 does not fit its call (outside `[min,max]`, over its bit width (U8), a string
-past its buffer, with a NUL or not UTF-8 (U4), a non-finite float) latches
-the matching reason on a write and writes nothing; a write checks room for the
-whole operation, length field, align and payload, before any bit (U10).
+past its buffer, with a NUL or not UTF-8 (U4), a non-finite float) traps on a
+write and a measure and writes nothing (U9); a write checks room for the
+whole operation, length field, align and payload, before any bit, and traps
+naming `past_end` when it does not fit (U10, U9).
 
 **The reader forgives nothing** (format 2.0: "every value has exactly one
 encoding"). A packet reader reads `serializeEnd()` after the top-level object:
@@ -540,8 +573,9 @@ it. On each:
 The order of one serialize call (`serialize_stream.lua`, `M.method`). Write
 and measure: the holder is a table, else raise; the family loads, else raise
 "not implemented"; the arm's `check` runs (a bad declaration raises) and its
-`checkValue` (a value of the wrong type raises); a failed write returns
-`false`; the arm runs. Read: the family loads, else raise "not implemented";
+`checkValue` (a value of the wrong type raises); the arm runs, and traps on a
+value its operation cannot carry (U9). There is no failed write or measure
+state to consult. Read: the family loads, else raise "not implemented";
 a failed stream returns `false`; a holder that is not a table or a bad
 declaration refuses `value_out_of_range`; the arm runs; the stream settles
 the result (a read assigns the holder only on success). Because the family
@@ -552,10 +586,11 @@ code is not a runtime condition.
 **The measure stream** (STANDARD.md, The Measure Stream) follows the writer's
 misuse model, charges 7 bits per alignment-performing operation (`align`,
 `bytes`, `string`; `alignBits()` is always 7) and exact widths for everything
-else, and refuses nothing (IMPLEMENTING.md U6): where the writer latches a
-reason, the measure returns false and latches nothing, so its `error()` is
-always nil, and an object that refuses on it latches nothing. Its end costs
-nothing.
+else, and refuses nothing (IMPLEMENTING.md U6): it makes every check a write
+makes, except room, which it does not have, by the same trap (U9), and
+latches nothing, so its `error()` is always nil; `fail` returns false and an
+object that refuses on it makes `serializeObject` return false, recording
+nothing. Its end costs nothing.
 
 ## (h) THE FILE LAYOUT
 
@@ -596,34 +631,36 @@ return {
   wrong Lua type or outside its Go type's domain ((c)), or a `serializeBytes`
   value whose length is not `numBytes`. It also runs before the latch check,
   so misuse raises on a failed stream too. A value inside its Go type but
-  outside `[min,max]` is not misuse: the write arm latches it.
+  outside `[min,max]` is caught by the write and measure arms: they trap
+  (U9).
 - `write(stream, ...)` and `measure(stream, ...)` receive the arguments with
   `holder.value` in the holder's place (`serializeIntRelative`:
-  `write(stream, previous, value)`). They return `true`, or `false` after
-  latching through a primitive or `stream:_fail(reason)`; `reason` is one of
-  `serialize.Refusal`'s eight.
+  `write(stream, previous, value)`). They return `true`, or trap through a
+  primitive or `stream:_fail(reason)`, which on a write or a measure stream is
+  the trap (U9): it raises `serialize: write misuse (IMPLEMENTING.md U9):
+  <reason>` and records nothing; `reason` is one of `serialize.Refusal`'s.
 - `read(stream, ...)` receives the arguments without the holder and returns
   `true, value` or `false` (after latching). It never touches a holder: the
   stream assigns it.
-- An arm that returns `false` without a latched error, `true` on a failed
-  stream, or a non-boolean, raises `serialize: <name> returned false without latching an error` (and its siblings): the contract is held, not trusted.
+- A read arm that returns `false` without a latched error, `true` on a failed
+  stream, or a non-boolean, raises `serialize: <name> returned false without latching an error` (and its siblings); a write or measure arm that returns anything but `true` raises `serialize: <name> write or measure arm must return true or trap`: the contract is held, not trusted.
 - A family module reaches another family through the stream module's loader,
   `require("serialize_stream").family("int128", "serializeFixed")`, never a
   bare `require` and never through the entry, so a sibling whose file is
   absent raises `serialize: serializeFixed not implemented` rather than
   `module not found`.
 
-**The primitives an arm calls**, all in `serialize_stream.lua`, each checking
-the latch first:
+**The primitives an arm calls**, all in `serialize_stream.lua`; the read
+primitives check the latch first:
 
 | primitive | stream | what |
 |---|---|---|
-| `stream:_writeBits(value, bits)` | W | bits in [1,64]; value masked to bits; the TOTAL width is checked against the capacity before anything is written (`past_end`); bits > 32 split low 32 first; returns boolean |
-| `stream:_writeBytes(s)` | W | the stream must be aligned (else raises serialize.go's `panicNotAligned`); `past_end` if it does not fit; returns boolean |
+| `stream:_writeBits(value, bits)` | W | bits in [1,64]; value masked to bits; the TOTAL width is checked against the capacity before anything is written (else the trap, naming `past_end`, U9); bits > 32 split low 32 first; returns true |
+| `stream:_writeBytes(s)` | W | the stream must be aligned (else raises serialize.go's `panicNotAligned`); the trap naming `past_end` if it does not fit (U9); returns true |
 | `stream:_readBits(bits)` | R | bits in [1,64]; the bounds test precedes the load; returns the integer, or nil after latching `past_end` |
 | `stream:_readBytes(n)` | R | aligned; returns a fresh string of n bytes, or nil after latching `past_end`; the count is compared with what remains, in bytes, before anything is read |
-| `stream:_measure(bits)` | M | adds bits; returns boolean |
-| `stream:_fail(reason)` | W R M | latches reason if nothing is latched; returns false |
+| `stream:_measure(bits)` | M | adds bits; returns true |
+| `stream:_fail(reason)` | W R M | R: latches reason if nothing is latched, returns false; W and M: the trap (U9), records nothing |
 | `stream:serializeAlign()` | W R M | the public align, callable from an arm (the bytes family aligns first) |
 
 The write and read primitives build the bitpacker's `BitWriter` or

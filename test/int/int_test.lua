@@ -121,30 +121,30 @@ function TestSerializeInt()
     check(rs:serializeInt64(h, -100, 100) and h.value == 55, "small-range round trip")
   end
 
-  -- 4. the writer's value_out_of_range latch for a value one past each bound
+  -- 4. a value one past each bound is write misuse: the trap
+  -- (IMPLEMENTING.md U9), naming value_out_of_range, with nothing latched
   do
-    check(serialize.WriteStream.new(16):serializeInt({ value = 11 }, 0, 10) == false, "int max+1 must latch")
-    local w1 = serialize.WriteStream.new(16)
-    check(w1:serializeInt({ value = 11 }, 0, 10) == false
-      and w1:error() == serialize.Refusal.ValueOutOfRange, "int max+1 latches value_out_of_range")
-    local w2 = serialize.WriteStream.new(16)
-    check(w2:serializeInt({ value = -1 }, 0, 10) == false
-      and w2:error() == serialize.Refusal.ValueOutOfRange, "int min-1 latches value_out_of_range")
-
-    local w3 = serialize.WriteStream.new(16)
-    check(w3:serializeInt64({ value = 10000000001 }, -10000000000, 10000000000) == false
-      and w3:error() == serialize.Refusal.ValueOutOfRange, "int64 max+1 latches value_out_of_range")
-    local w4 = serialize.WriteStream.new(16)
-    check(w4:serializeInt64({ value = -10000000001 }, -10000000000, 10000000000) == false
-      and w4:error() == serialize.Refusal.ValueOutOfRange, "int64 min-1 latches value_out_of_range")
-
+    local function traps(what, fn)
+      local ws = serialize.WriteStream.new(16)
+      local ok, err = pcall(fn, ws)
+      check(not ok, what .. ": did not trap")
+      check(string.find(tostring(err), "write misuse (IMPLEMENTING.md U9): value_out_of_range", 1, true) ~= nil,
+        what .. ": the trap was " .. tostring(err))
+      check(ws:error() == nil and ws:bitsProcessed() == 0, what .. ": latched or wrote")
+    end
+    traps("int max+1", function(w) return w:serializeInt({ value = 11 }, 0, 10) end)
+    traps("int min-1", function(w) return w:serializeInt({ value = -1 }, 0, 10) end)
+    traps("int64 max+1", function(w)
+      return w:serializeInt64({ value = 10000000001 }, -10000000000, 10000000000)
+    end)
+    traps("int64 min-1", function(w)
+      return w:serializeInt64({ value = -10000000001 }, -10000000000, 10000000000)
+    end)
     local m0 = { lo = 0, hi = 0 }
     local m10 = { lo = 10, hi = 0 }
-    local w5 = serialize.WriteStream.new(16)
-    check(w5:serializeInt128({ value = { lo = 11, hi = 0 } }, m0, m10) == false
-      and w5:error() == serialize.Refusal.ValueOutOfRange, "int128 max+1 latches value_out_of_range")
-    local w6 = serialize.WriteStream.new(16)
-    check(w6:serializeInt128({ value = { lo = 0xffffffffffffffff, hi = 0xffffffffffffffff } }, m0, m10) == false
-      and w6:error() == serialize.Refusal.ValueOutOfRange, "int128 min-1 latches value_out_of_range")
+    traps("int128 max+1", function(w) return w:serializeInt128({ value = { lo = 11, hi = 0 } }, m0, m10) end)
+    traps("int128 min-1", function(w)
+      return w:serializeInt128({ value = { lo = 0xffffffffffffffff, hi = 0xffffffffffffffff } }, m0, m10)
+    end)
   end
 end

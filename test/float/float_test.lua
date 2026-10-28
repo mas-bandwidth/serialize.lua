@@ -3,8 +3,9 @@
 -- conformance/float.txt and double.txt through the shared runner, comparing BIT
 -- PATTERNS (STANDARD.md, "Finite values only, every one bit exact"): accepted
 -- records read and (when canonical) write the exact bytes; non-finite patterns
--- are refused as non_finite_float with the holder untouched. The writer and the
--- measure refuse a non-finite value, tested after the float32 narrowing. fround
+-- are refused as non_finite_float with the holder untouched. A non-finite value
+-- is write misuse, tested after the float32 narrowing: the writer and the
+-- measure trap on it (IMPLEMENTING.md U9, U6). fround
 -- pins Go's float32() conversion on a table of edges computed by Go at
 -- `.ref/gen_fround_edges` (JOB.md). No real time, no sockets, no network: io
 -- only reads the conformance files.
@@ -23,17 +24,25 @@ local function fromDoubleBits(bits)
   return (string.unpack("<d", string.pack("<i8", bits)))
 end
 
--- writeRefused(method, value): the writer latches non_finite_float and writes
--- nothing; the measure refuses and latches nothing (IMPLEMENTING.md U6).
+-- traps(fn): fn raises the write-misuse trap naming non_finite_float.
+local function traps(fn, what)
+  local ok, err = pcall(fn)
+  check(not ok, what .. ": did not trap")
+  check(string.find(tostring(err), "write misuse (IMPLEMENTING.md U9): " .. NON_FINITE, 1, true) ~= nil,
+    what .. ": the trap was " .. tostring(err))
+end
+
+-- writeRefused(method, value): the writer traps (U9), writing nothing and
+-- latching nothing; the measure traps the same way (U6).
 local function writeRefused(method, value, what)
   local ws = serialize.WriteStream.new(8)
   local h = { value = value }
-  check(ws[method](ws, h) == false, what .. ": the write must refuse")
-  check(ws:error() == NON_FINITE, what .. ": the write latched " .. tostring(ws:error()))
-  check(ws:bitsProcessed() == 0, what .. ": the refused write wrote bits")
+  traps(function() return ws[method](ws, h) end, what .. ": the write")
+  check(ws:error() == nil, what .. ": the write latched " .. tostring(ws:error()))
+  check(ws:bitsProcessed() == 0, what .. ": the trapped write wrote bits")
   check(rawequal(h.value, value) or (h.value ~= h.value and value ~= value), what .. ": the holder changed")
   local ms = serialize.MeasureStream.new()
-  check(ms[method](ms, { value = value }) == false, what .. ": the measure must refuse")
+  traps(function() return ms[method](ms, { value = value }) end, what .. ": the measure")
   check(ms:error() == nil, what .. ": the measure latched " .. tostring(ms:error()))
 end
 

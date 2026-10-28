@@ -151,17 +151,17 @@ function TestSerializeIntRelative()
     check(rh.value == 0 and rs:bitsProcessed() == 0, "the refused read consumed bits or wrote the holder")
   end
 
-  -- a current inside the int32 type but outside the operation's domain is not
-  -- misuse: the write latches value_out_of_range and writes nothing; the measure
-  -- refuses and latches nothing (IMPLEMENTING.md U6)
+  -- a current inside the int32 type but outside the operation's domain (not
+  -- above previous) is write misuse: the write traps, writing and latching
+  -- nothing, and the measure traps the same way (IMPLEMENTING.md U9, U6)
   -- (serialize.go WriteStream/MeasureStream SerializeIntRelative; DESIGN.md (c), (h)).
   do
     for _, current in ipairs({ -1, -5, -2147483648 }) do
       local ws = serialize.WriteStream.new(8)
       local wh = { value = current }
-      check(ws:serializeIntRelative(100, wh) == false,
-        "negative current " .. current .. " write succeeded")
-      check(ws:error() == ValueOutOfRange,
+      raises(function() ws:serializeIntRelative(100, wh) end,
+        "write misuse (IMPLEMENTING.md U9): value_out_of_range")
+      check(ws:error() == nil,
         "negative current " .. current .. " write latched " .. tostring(ws:error()))
       check(ws:bitsProcessed() == 0,
         "negative current " .. current .. " write consumed bits")
@@ -169,8 +169,8 @@ function TestSerializeIntRelative()
 
       local ms = serialize.MeasureStream.new()
       local mh = { value = current }
-      check(ms:serializeIntRelative(100, mh) == false,
-        "negative current " .. current .. " measure succeeded")
+      raises(function() ms:serializeIntRelative(100, mh) end,
+        "write misuse (IMPLEMENTING.md U9): value_out_of_range")
       check(ms:error() == nil,
         "negative current " .. current .. " measure latched " .. tostring(ms:error()))
       check(ms:bitsProcessed() == 0,

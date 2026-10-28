@@ -92,8 +92,9 @@ function TestSerializeCompressedFloat()
   -- 4. STANDARD.md, "The decode must be finite": over [3*2^103, FLT_MAX] at
   -- resolution 2^104 the top integer decodes to +inf. The declaration is
   -- non-conforming as a whole, so the WRITER raises on it even for a value
-  -- that decodes finite (min itself), through both entry points; the measure
-  -- and the reader do not raise, and the reader refuses the top integer as
+  -- that decodes finite (min itself), through both entry points, and the
+  -- measure makes the same check by the same trap (IMPLEMENTING.md U6, U9);
+  -- the reader does not raise, and refuses the top integer as
   -- non_finite_float.
   do
     local min, max, res = 3.0 * 2.0 ^ 103, 340282346638528859811704183484516925440.0, 2.0 ^ 104
@@ -104,8 +105,12 @@ function TestSerializeCompressedFloat()
     raisesDecode(function()
       serialize.WriteStream.new(8):serializeCompressedFloatPrecomputed({ value = min }, maxInt, bits, delta, min)
     end, "precomputed")
-    local ms = serialize.MeasureStream.new()
-    check(ms:serializeCompressedFloat({ value = min }, min, max, res), "the measure does not raise")
+    raisesDecode(function()
+      serialize.MeasureStream.new():serializeCompressedFloat({ value = min }, min, max, res)
+    end, "measure, derived")
+    raisesDecode(function()
+      serialize.MeasureStream.new():serializeCompressedFloatPrecomputed({ value = min }, maxInt, bits, delta, min)
+    end, "measure, precomputed")
     -- the top integer, read: non_finite_float, destination untouched
     local ws = serialize.WriteStream.new(8)
     check(ws:serializeBits({ value = maxInt }, bits))
@@ -122,10 +127,15 @@ function TestSerializeCompressedFloat()
     local rs2 = serialize.ReadStream.new(ws2:data())
     check(rs2:serializeCompressedFloat(h, min, max, res) and h.value < math.huge,
       "the integer below the top decodes finite")
-    -- a delta past FLT_MAX is the same misdeclaration
-    raisesDecode(function()
-      serialize.WriteStream.new(8):serializeCompressedFloat({ value = 0.0 }, -max, max, 1.0)
-    end, "delta past FLT_MAX")
+    -- a delta past FLT_MAX, and a delta / resolution past FLT_MAX, are
+    -- misdeclarations of the same kind (IMPLEMENTING.md, "The check model"),
+    -- trapped on write and measure, never clamped
+    for _, s in ipairs({ serialize.WriteStream.new(8), serialize.MeasureStream.new() }) do
+      local ok, err = pcall(s.serializeCompressedFloat, s, { value = 0.0 }, -max, max, 1.0)
+      check(not ok and tostring(err):find("delta max - min", 1, true), "delta past FLT_MAX: " .. tostring(err))
+      ok, err = pcall(s.serializeCompressedFloat, s, { value = 0.0 }, 0.0, 1e38, 1e-38)
+      check(not ok and tostring(err):find("delta / resolution", 1, true), "delta / res past FLT_MAX: " .. tostring(err))
+    end
     -- a conforming declaration's write is untouched by the assert
     check(serialize.WriteStream.new(8):serializeCompressedFloat({ value = 5.0 }, 0.0, 10.0, 0.01),
       "a conforming declaration writes")

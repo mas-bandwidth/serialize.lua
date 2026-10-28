@@ -37,9 +37,9 @@ local function checkBits(bits, lo, hi, panicmsg)
 end
 
 -- IMPLEMENTING.md U8, "The check model": a value that does not fit its bit
--- width is caught, never masked. It latches value_out_of_range on a write, as
--- every value outside its call's range does here (DESIGN.md (c), (g)), and the
--- measure returns false (U6). (value >> bits) is logical: a negative value
+-- width is caught, never masked. It traps on a write and a measure (U9), as
+-- every value outside its call's range does here (DESIGN.md (c), (g); the
+-- measure by the same trap, U6). (value >> bits) is logical: a negative value
 -- fails it below 64 bits, and at 64 bits every pattern fits.
 local function armWrite(stream, value, bits)
   if value >> bits ~= 0 then return stream:_fail(VALUE_OUT_OF_RANGE) end

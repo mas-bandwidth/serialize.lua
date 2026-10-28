@@ -154,7 +154,7 @@ local fixed = {
     end
   end,
   -- STANDARD.md, fixed (Q format, ranged): raw_value - raw_min in the bits the
-  -- raw range needs. A value outside [raw_min, raw_max] latches ValueOutOfRange
+  -- raw range needs. A value outside [raw_min, raw_max] traps (IMPLEMENTING.md U9)
   -- (serialize.go WriteStream.SerializeFixed64/128).
   write = function(s, value, integerBits, fractionBits, min, max)
     if integerBits + fractionBits <= 64 then
