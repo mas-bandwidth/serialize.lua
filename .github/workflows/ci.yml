@@ -53,7 +53,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64, fleet, serialize]
     env:
-      SERIALIZE_TAG: v2.1.0
+      SERIALIZE_TAG: v2.1.1
     steps:
       - uses: actions/checkout@v4
 
