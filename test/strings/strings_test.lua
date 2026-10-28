@@ -117,13 +117,16 @@ local function testClaimedLengthCheckedFirst()
 end
 
 -- serialize.go TestWideStringLengthValidatedBeforeNarrowing, the string case:
--- a length equal to bufferSize is refused on write (the terminator has nowhere
--- to go), and one less fits.
+-- a length equal to bufferSize is write misuse (the terminator has nowhere to
+-- go), and traps (IMPLEMENTING.md U9); one less fits.
 local function testStringLengthOnWrite()
   local ws = serialize.WriteStream.new(64)
-  check(ws:serializeString({ value = "ABC" }, 3) == false, "string length equals bufferSize refused")
-  check(ws:error() == Refusal.ValueOutOfRange, "string refusal kind")
-  check(ws:bitsProcessed() == 0, "a refused write writes nothing")
+  local ok, err = pcall(ws.serializeString, ws, { value = "ABC" }, 3)
+  check(not ok, "string length equals bufferSize traps")
+  check(string.find(tostring(err), "write misuse (IMPLEMENTING.md U9): " .. Refusal.ValueOutOfRange, 1, true),
+    "the trap names value_out_of_range: " .. tostring(err))
+  check(ws:error() == nil, "a trapped write latches nothing")
+  check(ws:bitsProcessed() == 0, "a trapped write writes nothing")
   local ws2 = serialize.WriteStream.new(64)
   check(ws2:serializeString({ value = "AB" }, 3), "string length one less fits")
 end

@@ -11,10 +11,9 @@
     bit exact"). A pattern whose exponent field is all ones (NaN with any
     payload, either infinity) is refused on read as non_finite_float, tested on
     the RAW BITS before any conversion, and the destination is left unwritten.
-    The writer and the measure latch non_finite_float for a non-finite value,
-    tested on the bits after the float32 narrowing, so a finite double above
-    FLT_MAX that narrows to infinity is refused too (serialize.go v2
-    SerializeFloat32/SerializeFloat64). Negative zero and every subnormal are
+    A non-finite value is write misuse: the writer and the measure trap on it
+    (IMPLEMENTING.md U9, U6), tested on the bits after the float32 narrowing,
+    so a finite double above FLT_MAX that narrows to infinity traps too. Negative zero and every subnormal are
     finite and reproduced exactly. float32 rounding (DESIGN.md (e)) is Go's
     float32() conversion: round to nearest, ties to even, subnormal rounding,
     overflow to signed infinity.

@@ -71,6 +71,35 @@ for _, name in ipairs(INT128) do
   M.Int128[name] = lazy("int128", name, "Int128", "Int128." .. name)
 end
 
+-- serialize_copy_string (IMPLEMENTING.md U15): copyString(source, destSize)
+-- returns the bounded copy of source for a string field whose buffer_size is
+-- destSize. Lua strings are byte strings, so the rule is applied to source's
+-- bytes whatever they hold: the bytes before the first NUL; if more than
+-- destSize - 1, the first destSize - 1 of them, then bytes dropped from the end
+-- while the first byte left out is a continuation byte (10xxxxxx). For
+-- well-formed UTF-8 that is the longest prefix that fits and does not end
+-- inside a character, which serializeString with bufferSize = destSize
+-- accepts. destSize below 1 (or not an integer), and a source that is not a
+-- string, are write misuse: the trap, error() (U9).
+function M.copyString(source, destSize)
+  if type(source) ~= "string" then
+    error("serialize: copyString takes a string source (IMPLEMENTING.md U9, U15)", 2)
+  end
+  if math.type(destSize) ~= "integer" or destSize < 1 then
+    error("serialize: copyString destSize must be an integer >= 1 (IMPLEMENTING.md U9, U15)", 2)
+  end
+  local nul = string.find(source, "\0", 1, true)
+  local n = nul and nul - 1 or #source
+  if n <= destSize - 1 then
+    return string.sub(source, 1, n)
+  end
+  n = destSize - 1
+  while n > 0 and (string.byte(source, n + 1) & 0xC0) == 0x80 do
+    n = n - 1
+  end
+  return string.sub(source, 1, n)
+end
+
 -- serialize.go Continue: one continuation bit; false as soon as the stream has
 -- failed, so a sentinel-driven loop always terminates on hostile data.
 function M.Continue(s, more)

@@ -199,6 +199,21 @@ local function decode(s, iv, maxInt, delta, min)
   return true, v
 end
 
+-- IMPLEMENTING.md, "The check model", and U9: on a write and a measure, a
+-- declaration whose delta (max - min) or delta / res is not finite in float32
+-- is write misuse, and traps, never clamped: (0, 1e38, 1e-38) would otherwise
+-- clamp values to 4294967040 and send a field nobody declared. The top decode
+-- min + delta is checked too (checkTopDecode). A read derives as the standard
+-- says and refuses a non-finite decode at runtime, so these are write side.
+local PANIC_DELTA = "serialize: compressed float declaration's delta max - min must be finite in float32"
+local PANIC_VALUES = "serialize: compressed float declaration's delta / resolution must be finite in float32"
+local function checkWriteDeclaration(min, max, res)
+  local delta = fround(max - min)
+  if not isFinite(delta) then error(PANIC_DELTA, 0) end
+  if not isFinite(fround(delta / res)) then error(PANIC_VALUES, 0) end
+  checkTopDecode(min, delta)
+end
+
 -- derive(min, max, res): STANDARD.md, "compressed_float", over float32
 -- values already rounded and validated. Returns maxIntegerValue, bits, delta.
 local function derive(min, max, res)
@@ -237,8 +252,8 @@ local compressed = {
     local mx = roundNumber(max, "max")
     local rs = roundNumber(resolution, "resolution")
     local val = roundNumber(value, "value")
+    checkWriteDeclaration(mn, mx, rs)
     local maxInt, bitsN, delta = derive(mn, mx, rs)
-    checkTopDecode(mn, delta)
     local normalized = fround(fround(val - mn) / delta)
     if not (normalized >= 0) then
       normalized = 0
@@ -264,11 +279,13 @@ local compressed = {
     if iv > maxInt then return s:_fail(VALUE_OUT_OF_RANGE) end
     return decode(s, iv, maxInt, delta, mn)
   end,
-  -- serialize.go MeasureStream.SerializeCompressedFloat32: the wire width.
+  -- serialize.go MeasureStream.SerializeCompressedFloat32: the wire width,
+  -- after every check the write makes (IMPLEMENTING.md U6).
   measure = function(s, _value, min, max, resolution)
     local mn = roundNumber(min, "min")
     local mx = roundNumber(max, "max")
     local rs = roundNumber(resolution, "resolution")
+    checkWriteDeclaration(mn, mx, rs)
     local _, bitsN = derive(mn, mx, rs)
     return s:_measure(bitsN)
   end,
@@ -327,7 +344,9 @@ local precomputed = {
     if iv > maxIntegerValue then return s:_fail(VALUE_OUT_OF_RANGE) end
     return decode(s, iv, maxIntegerValue, dl, mn)
   end,
-  measure = function(s, _value, _maxIntegerValue, bitsN, _delta, _min)
+  -- the wire width, after the top decode check the write makes (U6)
+  measure = function(s, _value, _maxIntegerValue, bitsN, delta, min)
+    checkTopDecode(roundNumber(min, "min"), roundNumber(delta, "delta"))
     return s:_measure(bitsN)
   end,
 }

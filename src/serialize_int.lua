@@ -74,7 +74,7 @@ local int = {
     end
   end,
   -- STANDARD.md, int (ranged): value - min in the uint32 domain, in the bits
-  -- the range needs. A value outside [min,max] latches ValueOutOfRange
+  -- the range needs. A value outside [min,max] traps (IMPLEMENTING.md U9)
   -- (serialize.go WriteStream.SerializeInt).
   write = function(s, value, min, max)
     if value < min or value > max then

@@ -47,8 +47,9 @@ function TestU1WriteBufferIsAMultipleOf8()
 end
 
 -- U3, U4: the writer checks UTF-8 and NUL on a string write, as the reader
--- does: a NUL first, then Table 3-7. Nothing is written for a refused string.
--- The measure applies the same checks and latches nothing (U6).
+-- does: a NUL first, then Table 3-7. A string that fails is write misuse and
+-- traps (U9), naming the reason, with nothing written and nothing latched.
+-- The measure applies the same checks by the same trap (U6).
 function TestU4StringWriteChecksUtf8AndNul()
   local cases = {
     { "a\0b", Refusal.EmbeddedNul },
@@ -59,11 +60,11 @@ function TestU4StringWriteChecksUtf8AndNul()
   }
   for _, c in ipairs(cases) do
     local ws = serialize.WriteStream.new(16)
-    check(ws:serializeString({ value = c[1] }, 16) == false, "string write accepted " .. c[2])
-    check(ws:error() == c[2], "string write latched " .. tostring(ws:error()) .. ", wanted " .. c[2])
-    check(ws:bitsProcessed() == 0, "a refused string write wrote bits")
+    raises(function() ws:serializeString({ value = c[1] }, 16) end, "write misuse (IMPLEMENTING.md U9): " .. c[2])
+    check(ws:error() == nil, "string write latched " .. tostring(ws:error()))
+    check(ws:bitsProcessed() == 0, "a trapped string write wrote bits")
     local ms = serialize.MeasureStream.new()
-    check(ms:serializeString({ value = c[1] }, 16) == false, "string measure accepted " .. c[2])
+    raises(function() ms:serializeString({ value = c[1] }, 16) end, "write misuse (IMPLEMENTING.md U9): " .. c[2])
     check(ms:error() == nil and ms:bitsProcessed() == 0, "string measure latched or counted")
   end
   local ws = serialize.WriteStream.new(16)
@@ -71,12 +72,13 @@ function TestU4StringWriteChecksUtf8AndNul()
 end
 
 -- U6: a measure stream refuses nothing: no read refusal is ever latched on it,
--- whatever the misuse, and it keeps counting after a refused call.
+-- whatever the misuse; misuse traps as it does on a write (U9), and the
+-- measure keeps counting after a trapped call.
 function TestU6MeasureRefusesNothing()
   local ms = serialize.MeasureStream.new()
-  check(ms:serializeInt({ value = 50 }, 0, 10) == false, "an out of range int measure is refused")
-  check(ms:serializeInt64({ value = -1 }, 0, 10) == false, "an out of range int64 measure is refused")
-  check(ms:serializeDouble({ value = 0 / 0 + 0.0 }) == false, "a NaN double measure is refused")
+  raises(function() ms:serializeInt({ value = 50 }, 0, 10) end, "value_out_of_range")
+  raises(function() ms:serializeInt64({ value = -1 }, 0, 10) end, "value_out_of_range")
+  raises(function() ms:serializeDouble({ value = 0 / 0 + 0.0 }) end, "non_finite_float")
   check(ms:serializeObject({ serialize = function() return false end }) == false, "a refusing object fails the call")
   check(ms:fail(Refusal.PastEnd) == false, "fail on a measure returns false")
   check(ms:error() == nil, "a measure latched " .. tostring(ms:error()))
@@ -143,8 +145,8 @@ function TestU7ReadMisuseRefusesNeverRaises()
 end
 
 -- U8 (AUDIT-LEDGER 2026-10-27, lua M, audit/bits_overwide.lua): a value that
--- does not fit its bit width is caught, never masked. The write latches
--- value_out_of_range and writes nothing; the measure refuses (U6).
+-- does not fit its bit width is caught, never masked. The write traps (U9)
+-- and writes nothing; the measure traps the same way (U6).
 function TestU8OverwideBitsAreCaught()
   local cases = {
     { "serializeBits", 300, 8 }, { "serializeBits", 2, 1 }, { "serializeBits", 0xffffffff, 31 },
@@ -153,11 +155,11 @@ function TestU8OverwideBitsAreCaught()
   for _, c in ipairs(cases) do
     local what = c[1] .. "(" .. c[2] .. ", " .. c[3] .. ")"
     local ws = serialize.WriteStream.new(16)
-    check(ws[c[1]](ws, { value = c[2] }, c[3]) == false, what .. ": the over-wide write was accepted")
-    check(ws:error() == Refusal.ValueOutOfRange, what .. ": the write latched " .. tostring(ws:error()))
-    check(ws:bitsProcessed() == 0, what .. ": the refused write wrote bits")
+    raises(function() ws[c[1]](ws, { value = c[2] }, c[3]) end, "value_out_of_range")
+    check(ws:error() == nil, what .. ": the write latched " .. tostring(ws:error()))
+    check(ws:bitsProcessed() == 0, what .. ": the trapped write wrote bits")
     local ms = serialize.MeasureStream.new()
-    check(ms[c[1]](ms, { value = c[2] }, c[3]) == false, what .. ": the over-wide measure was accepted")
+    raises(function() ms[c[1]](ms, { value = c[2] }, c[3]) end, "value_out_of_range")
     check(ms:error() == nil and ms:bitsProcessed() == 0, what .. ": the measure latched or counted")
   end
   -- the widest values that fit are written exactly
@@ -199,32 +201,33 @@ function TestU9U14PublicFail()
 end
 
 -- U10: a write checks room for the whole operation before writing any of it:
--- no length bits and no align bits ahead of a payload that does not fit.
+-- no length bits and no align bits ahead of a payload that does not fit. An
+-- operation that does not fit is write misuse, and traps (U9).
 function TestU10WholeOperationRoom()
   -- string: 8 length bits fit in 8 bytes, the 8 byte payload does not
   local ws = serialize.WriteStream.new(8)
   check(ws:serializeBits({ value = 1 }, 3), "three bits first")
-  check(ws:serializeString({ value = "abcdefgh" }, 200) == false, "the string that does not fit is refused")
-  check(ws:error() == Refusal.PastEnd, "it latched " .. tostring(ws:error()))
-  check(ws:bitsProcessed() == 3, "the refused string wrote " .. (ws:bitsProcessed() - 3) .. " bits")
+  raises(function() ws:serializeString({ value = "abcdefgh" }, 200) end, "past_end")
+  check(ws:error() == nil, "it latched " .. tostring(ws:error()))
+  check(ws:bitsProcessed() == 3, "the trapped string wrote " .. (ws:bitsProcessed() - 3) .. " bits")
   -- bytes: the align would fit, the payload does not
   ws = serialize.WriteStream.new(8)
   check(ws:serializeBits({ value = 1 }, 3), "three bits first")
-  check(ws:serializeBytes({ value = "12345678" }, 8) == false, "the bytes that do not fit are refused")
-  check(ws:error() == Refusal.PastEnd and ws:bitsProcessed() == 3, "the refused bytes wrote align bits")
+  raises(function() ws:serializeBytes({ value = "12345678" }, 8) end, "past_end")
+  check(ws:error() == nil and ws:bitsProcessed() == 3, "the trapped bytes wrote align bits")
   -- the exact fit is accepted
   ws = serialize.WriteStream.new(8)
   check(ws:serializeBits({ value = 1 }, 3) and ws:serializeBytes({ value = "1234567" }, 7), "an exact fit")
   check(ws:bitsProcessed() == 64, "the exact fit fills the buffer")
 end
 
--- U12: end on a write or a measure is a no-op returning true, on a failed
--- write stream too.
+-- U12: end on a write or a measure is a no-op returning true, after a
+-- trapped write too.
 function TestU12EndOnWriteAndMeasureIsTrue()
   local ws = serialize.WriteStream.new(0)
   check(ws:serializeEnd() == true, "end on a healthy write")
-  check(ws:serializeBits({ value = 1 }, 1) == false and ws:error() == Refusal.PastEnd, "the write fails")
-  check(ws:serializeEnd() == true and ws:bitsProcessed() == 0, "end on a failed write")
+  raises(function() ws:serializeBits({ value = 1 }, 1) end, "past_end")
+  check(ws:serializeEnd() == true and ws:bitsProcessed() == 0, "end after a trapped write")
   local ms = serialize.MeasureStream.new()
   check(ms:serializeEnd() == true and ms:bitsProcessed() == 0, "end on a measure")
 end

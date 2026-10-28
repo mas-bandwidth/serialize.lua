@@ -149,12 +149,13 @@ function TestSmoke()
   rs:reset("")
   check(rs:ok(), "reset clears the latch")
 
-  -- the write side: a write past the end latches past_end and writes nothing
+  -- the write side: a write past the end is write misuse and traps
+  -- (IMPLEMENTING.md U9), naming past_end, writing and latching nothing
   local ws = serialize.WriteStream.new(0)
-  check(probe.write(ws, { value = 1 }, 1) == false, "writing to a zero-capacity stream fails")
-  check(ws:error() == serialize.Refusal.PastEnd, "the write failure latches past_end")
-  check(ws:bitsProcessed() == 0 and ws:data() == "", "a refused write writes nothing")
-  check(ws:serializeAlign() == false, "align refuses on a failed write stream")
+  raises(function() probe.write(ws, { value = 1 }, 1) end, "serialize: write misuse (IMPLEMENTING.md U9): past_end")
+  check(ws:error() == nil, "the trapped write latched " .. tostring(ws:error()))
+  check(ws:bitsProcessed() == 0 and ws:data() == "", "a trapped write writes nothing")
+  check(ws:serializeAlign() == true, "an aligned align after a trap writes nothing and succeeds")
   raises(function() serialize.WriteStream.new(7) end, "serialize: bit writer buffer size must be a multiple of 8 bytes")
 
   -- the measure side counts, and refuses nothing (IMPLEMENTING.md U6)
@@ -168,18 +169,23 @@ function TestSmoke()
 
   -- the arm contract guard: an arm that lies about its result raises by name
   local liar = S.method(PROBE, "serializeLiar", 1)
-  raises(function() liar.write(serialize.WriteStream.new(8), { value = 0 }) end, "serialize: serializeLiar returned false without latching")
-  raises(function() liar.measure(serialize.MeasureStream.new(), { value = 0 }) end, "serialize: serializeLiar arm must return a boolean")
+  raises(function() liar.write(serialize.WriteStream.new(8), { value = 0 }) end,
+    "serialize: serializeLiar write or measure arm must return true or trap")
+  raises(function() liar.measure(serialize.MeasureStream.new(), { value = 0 }) end,
+    "serialize: serializeLiar write or measure arm must return true or trap")
   local lrs = serialize.ReadStream.new("")
   lrs:_fail(serialize.Refusal.PastEnd)
   check(liar.read(lrs, { value = 0 }) == false, "a failed stream never reaches the arm")
 
-  -- a value check (checkValue) raises on write and measure on a failed stream
-  -- too: misuse raises on a healthy stream and a failed one alike (DESIGN.md (g))
+  -- a value check (checkValue) raises on write and measure (DESIGN.md (g));
+  -- a write stream has no failed state, so after a trap a well-typed value
+  -- that fits is written as it would have been (IMPLEMENTING.md U9)
   local typed = S.method(PROBE, "serializeTyped", 1)
   raises(function() typed.write(ws, { value = 1.0 }) end, "serialize: probe value must be an integer")
   raises(function() typed.measure(ms, { value = "x" }) end, "serialize: probe value must be an integer")
-  check(typed.write(ws, { value = 1 }) == false, "a well-typed value on a failed stream fails without raising")
+  local ws8 = serialize.WriteStream.new(8)
+  raises(function() ws8:serializeBits({ value = 2 }, 1) end, "value_out_of_range")
+  check(typed.write(ws8, { value = 1 }) == true and ws8:bitsProcessed() == 1, "the write after a trap is written")
 
   -- Continue and Until fold the latch into the loop condition (serialize.go): a
   -- stream whose serializeBool fails stops the loop at once, whatever the holder
