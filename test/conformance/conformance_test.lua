@@ -29,6 +29,9 @@
 -- conformance-controls/<rule>.expected names. A needle that no longer matches
 -- is a failure of the control, never a silent no-op.
 --
+-- EXTRA CORPUS DIRECTORIES: an ordinary run also reads conformance-regress/ and every
+-- directory of SERIALIZE_CORPUS_EXTRA_DIR (':'-separated); a control run never does.
+--
 -- THE CORPUS ROOT: the directory holding conformance/ and conformance-controls/.
 -- It is the repository root (the vendored copy) unless SERIALIZE_CORPUS_DIR
 -- names another one, which is how the nightly functional test points this
@@ -687,19 +690,42 @@ end
 -- runCorpus(root): every record of every file under root/conformance/ (root
 -- defaults to the corpus root); returns the per-file counts, the total, and the
 -- names of the records that failed (with their messages).
-local function runCorpus(root)
+local function runCorpus(root, withExtra)
   root = root or CORPUS_ROOT
   local dir = root .. "/conformance"
   local files = readDir(dir, ".txt")
   check(#files > 0, "no conformance vectors found: " .. dir .. "/ is missing or empty")
+  -- the entries to run: {dir, file}. An ordinary run (withExtra) also takes the
+  -- *.txt of conformance-regress/ and of $SERIALIZE_CORPUS_EXTRA_DIR (a path list
+  -- separated by ':'); a control run never does, so a file added beside the corpus
+  -- cannot trip a control's expected list.
+  local entries = {}
+  for _, file in ipairs(files) do entries[#entries + 1] = { dir = dir, file = file } end
+  if withExtra then
+    local extras = { { "conformance-regress", false } }
+    for d in (os.getenv("SERIALIZE_CORPUS_EXTRA_DIR") or ""):gmatch("[^:]+") do
+      extras[#extras + 1] = { d, true }
+    end
+    for _, x in ipairs(extras) do
+      local xdir, required = x[1], x[2]
+      local xfiles = readDir(xdir, ".txt")
+      check(not required or #xfiles > 0, "SERIALIZE_CORPUS_EXTRA_DIR " .. xdir .. " is missing or holds no *.txt")
+      for _, file in ipairs(xfiles) do entries[#entries + 1] = { dir = xdir, file = file } end
+    end
+  end
   local names = {}
   local counts = {}
   local failed = {}
   local total = 0
-  for _, file in ipairs(files) do
-    local records = parseVectors(dir .. "/" .. file)
+  local seenFiles = {}
+  for _, e in ipairs(entries) do
+    local file = e.file
+    check(seenFiles[file] == nil, file .. ": a corpus file is named twice (" .. seenFiles[file] .. " and " .. e.dir .. ")")
+    seenFiles[file] = e.dir
+    local path = e.dir .. "/" .. file
+    local records = parseVectors(path)
     local declared = 0
-    for line in io.lines(dir .. "/" .. file) do
+    for line in io.lines(path) do
       if line:match("^operation%s") then declared = declared + 1 end
     end
     check(#records > 0 and #records == declared, file .. ": parsed " .. #records
@@ -718,7 +744,7 @@ end
 
 function TestConformanceCorpus()
   print("conformance: corpus root " .. CORPUS_ROOT)
-  local counts, total, failed = runCorpus()
+  local counts, total, failed = runCorpus(nil, true)
   for _, c in ipairs(counts) do print(c.file .. ": " .. c.n .. " records") end
   for _, f in ipairs(failed) do print("  FAIL " .. f.err) end
   check(#failed == 0, #failed .. " of " .. total .. " vectors failed")
