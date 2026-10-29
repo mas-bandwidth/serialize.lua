@@ -720,7 +720,9 @@ local function runCorpus(root, withExtra)
   local seenFiles = {}
   for _, e in ipairs(entries) do
     local file = e.file
-    check(seenFiles[file] == nil, file .. ": a corpus file is named twice (" .. seenFiles[file] .. " and " .. e.dir .. ")")
+    if seenFiles[file] ~= nil then
+      check(false, file .. ": a corpus file is named twice (" .. seenFiles[file] .. " and " .. e.dir .. ")")
+    end
     seenFiles[file] = e.dir
     local path = e.dir .. "/" .. file
     local records = parseVectors(path)
