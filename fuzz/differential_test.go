@@ -1162,3 +1162,38 @@ func firstDiffInts(a, b int) int {
 	}
 	return b
 }
+
+// sra-lua-1: declaration-refusal seeds use the existing Lua batch driver. These
+// are not writer-generated programs: an invalid declaration must refuse before
+// reading even when the packet is empty or contains otherwise valid zero bits.
+func TestAuditFixedWidthRefusalSeeds(t *testing.T) {
+	t.Parallel()
+	widths := [][2]int64{
+		{math.MaxInt64, 1},
+		{1, math.MaxInt64},
+		{math.MaxInt64, math.MaxInt64},
+		{math.MaxInt64 - 126, 127},
+		{129, 0},
+		{1, 128},
+	}
+	packets := []string{"00", ".", "ff", strings.Repeat("00", 16)}
+	var batch strings.Builder
+	for _, width := range widths {
+		for _, packet := range packets {
+			fmt.Fprintf(&batch, "R %s\nfixed64 0 %d %d 0 1\nend\nEND\n", packet, width[0], width[1])
+		}
+	}
+	path := filepath.Join(t.TempDir(), "fixed-width-refusal-seeds.txt")
+	if err := os.WriteFile(path, []byte(batch.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lines := runLua(t, path)
+	if len(lines) != len(widths)*len(packets) {
+		t.Fatalf("got %d seed results, want %d", len(lines), len(widths)*len(packets))
+	}
+	for i, line := range lines {
+		if line != "READ 0 value_out_of_range" {
+			t.Errorf("fixed-width refusal seed %d: got %q, want READ 0 value_out_of_range", i, line)
+		}
+	}
+}

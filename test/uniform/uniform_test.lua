@@ -285,3 +285,41 @@ function TestIntegerWidthGuard()
   check(e ~= nil and e:find("LUA_32BITS", 1, true) ~= nil, "a 32-bit maxinteger is refused by name")
   check(S.integerWidthError(-1) ~= nil, "a wrapped maxinteger is refused")
 end
+
+-- sra-lua-1, U7/U16: validate each width before adding them. Positive integer
+-- declarations must not wrap the total into the fixed64 arm or a zero-bit read.
+function TestU16FixedWidthsCannotWrap()
+  local bad = {
+    { math.maxinteger, 1 },
+    { 1, math.maxinteger },
+    { math.maxinteger, math.maxinteger },
+    { math.maxinteger - 126, 127 },
+    { 129, 0 },
+    { 1, 128 },
+  }
+  for _, widths in ipairs(bad) do
+    local ib, fb = widths[1], widths[2]
+    local what = "fixed Q" .. ib .. "." .. fb
+    for _, data in ipairs({ "\0\0", "" }) do
+      refusedRead(what, data, function(rs, h) return rs:serializeFixed(h, ib, fb, 0, 1) end)
+    end
+    for _, s in ipairs({ serialize.WriteStream.new(8), serialize.MeasureStream.new() }) do
+      raises(function() s:serializeFixed({ value = 0 }, ib, fb, 0, 1) end, "serialize: fixed point")
+      check(s:bitsProcessed() == 0 and s:error() == nil, what .. ": misuse wrote or latched")
+    end
+  end
+
+  local rs = serialize.ReadStream.new("\0\0")
+  local h = { value = SENTINEL }
+  check(rs:serializeFixed(h, math.maxinteger, 1, 0, 1) == false, "the bad declaration refuses")
+  check(rs:serializeFixed(h, 8, 8, 0, 0) == false, "a later zero-bit fixed read refuses")
+  check(rs:serializeBytes(h, 0) == false and rs:serializeEnd() == false, "later zero-bit reads refuse")
+  check(rs:bitsProcessed() == 0 and h.value == SENTINEL, "terminal reads changed cursor or holder")
+  check(rs:error() == Refusal.ValueOutOfRange, "the declaration refusal was replaced")
+  rs:reset(string.rep("\0", 16))
+  check(rs:serializeFixed(h, 1, 127, 0, 1), "the widest valid fraction remains accepted")
+  check(h.value.lo == 0 and h.value.hi == 0 and rs:bitsProcessed() == 128, "Q1.127 decoded incorrectly")
+  rs:reset("")
+  check(rs:serializeFixed(h, 128, 0, 0, 0), "the widest valid integer remains accepted")
+  check(h.value.lo == 0 and h.value.hi == 0 and rs:bitsProcessed() == 0, "Q128.0 decoded incorrectly")
+end
