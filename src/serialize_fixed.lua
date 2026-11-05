@@ -76,6 +76,10 @@ local function validateParams(integerBits, fractionBits, min, max)
     or math_type(min) ~= "integer" or math_type(max) ~= "integer" then
     return PANIC_FIXED_PARAMS
   end
+  -- Bound each width before their sum can wrap into the fixed64 arm.
+  if integerBits > 128 or fractionBits > 127 then
+    return PANIC_FIXED_PARAMS
+  end
   local total = integerBits + fractionBits
   if integerBits < 1 or fractionBits < 0 or (total > 64 and total ~= 128) or min > max then
     return PANIC_FIXED_PARAMS
