@@ -148,3 +148,60 @@ function TestSerializeInt()
     end)
   end
 end
+
+-- serialize.go Uint128.Lsh/Rsh and Int128.Lsh/Rsh: a shift count of 128 or more
+-- yields zero (all sign bits for the arithmetic Int128.rsh); a negative or
+-- non-integer count raises.
+function TestInt128Shifts()
+  local U, I = serialize.Uint128, serialize.Int128
+  local ones = { lo = -1, hi = -1 }
+  local function eq(v, lo, hi, what)
+    check(v.lo == lo and v.hi == hi,
+      what .. string.format(": got {lo=%x, hi=%x}, want {lo=%x, hi=%x}", v.lo, v.hi, lo, hi))
+  end
+  -- bit k of a 128-bit value, as its two lanes
+  local function bit(k)
+    if k < 64 then return 1 << k, 0 end
+    return 0, 1 << (k - 64)
+  end
+  -- bits k..127 set: the sign fill of an arithmetic right shift by 127 - k
+  local function fillFrom(k)
+    if k < 64 then return -1 << k, -1 end
+    return 0, -1 << (k - 64)
+  end
+
+  local one = { lo = 1, hi = 0 }
+  local top = { lo = 0, hi = math.mininteger }
+  for n = 0, 127 do
+    local lo, hi = bit(n)
+    eq(U.lsh(one, n), lo, hi, "Uint128.lsh(1, " .. n .. ")")
+    eq(I.lsh(one, n), lo, hi, "Int128.lsh(1, " .. n .. ")")
+    lo, hi = bit(127 - n)
+    eq(U.rsh(top, n), lo, hi, "Uint128.rsh(2^127, " .. n .. ")")
+    lo, hi = fillFrom(127 - n)
+    eq(I.rsh(top, n), lo, hi, "Int128.rsh(min, " .. n .. ")")
+    eq(I.rsh(ones, n), -1, -1, "Int128.rsh(-1, " .. n .. ")")
+  end
+
+  for _, n in ipairs({ 128, 129, 192, 255, 256, 1000, math.maxinteger }) do
+    eq(U.lsh(one, n), 0, 0, "Uint128.lsh(1, " .. n .. ")")
+    eq(U.lsh(ones, n), 0, 0, "Uint128.lsh(max, " .. n .. ")")
+    eq(I.lsh(one, n), 0, 0, "Int128.lsh(1, " .. n .. ")")
+    eq(U.rsh(top, n), 0, 0, "Uint128.rsh(2^127, " .. n .. ")")
+    eq(U.rsh(ones, n), 0, 0, "Uint128.rsh(max, " .. n .. ")")
+    eq(I.rsh({ lo = 4, hi = 0 }, n), 0, 0, "Int128.rsh(4, " .. n .. ")")
+    eq(I.rsh(top, n), -1, -1, "Int128.rsh(min, " .. n .. ")")
+    eq(I.rsh({ lo = -4, hi = -1 }, n), -1, -1, "Int128.rsh(-4, " .. n .. ")")
+  end
+
+  local fns = {
+    ["Uint128.lsh"] = U.lsh, ["Uint128.rsh"] = U.rsh,
+    ["Int128.lsh"] = I.lsh, ["Int128.rsh"] = I.rsh,
+  }
+  for name, fn in pairs(fns) do
+    for _, n in ipairs({ -1, -64, -128, math.mininteger, 1.5, 2.0, 128.0 }) do
+      local ok = pcall(fn, { lo = -4, hi = -1 }, n)
+      check(not ok, name .. "(-4, " .. tostring(n) .. ") did not raise")
+    end
+  end
+end
