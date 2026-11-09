@@ -30,6 +30,15 @@ local PANIC_WRITE_OVERFLOW = "serialize: bit writer overflow"
 local PANIC_READ_OVERFLOW = "serialize: bit reader would read past the end of the buffer"
 local PANIC_NOT_ALIGNED = "serialize: byte array serialization requires byte alignment"
 local PANIC_BUFFER_BYTES = "serialize: bit writer buffer size must be a multiple of 8 bytes"
+local PANIC_WRITE_AFTER_FLUSH = "serialize: bit writer write after flush"
+
+-- Flush ends the write: a flush that stored a partial word leaves the scratch
+-- out of step with the bit count, and the C reference asserts on the next write.
+local function checkNotFlushed(w)
+  if w._scratchBits ~= w._bitsWritten % 64 then
+    error(PANIC_WRITE_AFTER_FLUSH, 3)
+  end
+end
 
 local function checkBits(bits)
   if math.type(bits) ~= "integer" or bits < 1 or bits > 32 then
@@ -70,6 +79,7 @@ function BitWriter:writeBits(value, bits)
   if math.type(value) ~= "integer" then
     error("serialize: bit writer value must be an integer", 2)
   end
+  checkNotFlushed(self)
   -- serialize.go's WriteBits panics panicWriteOverflow, before writing.
   if self._bitsWritten + bits > self._numBits then
     error(PANIC_WRITE_OVERFLOW, 2)
@@ -108,6 +118,7 @@ function BitWriter:writeBytes(s)
   if type(s) ~= "string" then
     error("serialize: bit writer bytes must be a Lua string", 2)
   end
+  checkNotFlushed(self)
   if self._bitsWritten % 8 ~= 0 then
     error(PANIC_NOT_ALIGNED, 2)
   end
