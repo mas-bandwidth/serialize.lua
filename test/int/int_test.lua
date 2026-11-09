@@ -148,3 +148,42 @@ function TestSerializeInt()
     end)
   end
 end
+
+function TestSerializeInt128SignedDivMod()
+  local I = serialize.Int128
+  local function eq(v, want, what)
+    check(v.lo == want.lo and v.hi == want.hi,
+      what .. ": got {lo=" .. tostring(v.lo) .. ",hi=" .. tostring(v.hi)
+        .. "} want {lo=" .. tostring(want.lo) .. ",hi=" .. tostring(want.hi) .. "}")
+  end
+  -- truncating division: quotient toward zero, remainder takes dividend sign
+  local cases = {
+    { 7, 2, 3, 1 }, { -7, 2, -3, -1 }, { 7, -2, -3, 1 }, { -7, -2, 3, -1 },
+    { -6, 3, -2, 0 }, { 6, -3, -2, 0 }, { -6, -3, 2, 0 }, { 6, 3, 2, 0 },
+    { 10, 3, 3, 1 }, { -10, 3, -3, -1 }, { 10, -3, -3, 1 }, { -10, -3, 3, -1 },
+    { 0, 5, 0, 0 }, { 0, -5, 0, 0 }, { 1, -2, 0, 1 }, { -1, 2, 0, -1 },
+    { -100, 7, -14, -2 }, { 100, -7, -14, 2 },
+  }
+  for _, c in ipairs(cases) do
+    local x, y = I.from64(c[1]), I.from64(c[2])
+    local wantQ, wantR = I.from64(c[3]), I.from64(c[4])
+    local label = "Int128 divMod " .. c[1] .. "/" .. c[2]
+    local q, r = I.divMod(x, y)
+    eq(q, wantQ, label .. " quotient")
+    eq(r, wantR, label .. " remainder")
+    eq(I.div(x, y), wantQ, "Int128 div " .. c[1] .. "/" .. c[2])
+    eq(I.mod(x, y), wantR, "Int128 mod " .. c[1] .. "/" .. c[2])
+  end
+  -- a dividend wider than 64 bits: 2^64 / 3 and its negation
+  local wide = { lo = 0, hi = 1 }
+  local q, r = I.divMod(wide, I.from64(3))
+  eq(q, I.from64(6148914691236517205), "Int128 divMod 2^64/3 quotient")
+  eq(r, I.from64(1), "Int128 divMod 2^64/3 remainder")
+  local negWide = I.neg(wide)
+  q, r = I.divMod(negWide, I.from64(3))
+  eq(q, I.from64(-6148914691236517205), "Int128 divMod -2^64/3 quotient")
+  eq(r, I.from64(-1), "Int128 divMod -2^64/3 remainder")
+  q, r = I.divMod(negWide, I.from64(-3))
+  eq(q, I.from64(6148914691236517205), "Int128 divMod -2^64/-3 quotient")
+  eq(r, I.from64(-1), "Int128 divMod -2^64/-3 remainder")
+end
