@@ -100,6 +100,25 @@ function TestU9PastEndTraps()
   check(ws:serializeBits({ value = 1 }, 3) and ws:serializeBytes({ value = "1234567" }, 7), "an exact fit")
 end
 
+-- U11: flush ends the write. A write after it raises, as the C reference
+-- asserts, and the flushed bytes stay as they were.
+function TestU9WriteAfterFlushTraps()
+  local cases = {
+    { "bits after flush", function(s) return s:serializeBits({ value = 0xCD }, 8) end },
+    { "bytes after flush", function(s) return s:serializeBytes({ value = "0123456789ABCDEFG" }, 17) end },
+  }
+  for _, c in ipairs(cases) do
+    local ws = serialize.WriteStream.new(64)
+    check(ws:serializeBits({ value = 0xAB }, 8), c[1] .. ": the prefix write")
+    ws:flush()
+    raises(function() c[2](ws) end, "serialize: bit writer write after flush")
+    check(ws:error() == nil, c[1] .. ": latched " .. tostring(ws:error()))
+    check(ws:bitsProcessed() == 8, c[1] .. ": the raised write counted bits")
+    ws:flush()
+    check(ws:data() == "\xab", c[1] .. ": the flushed bytes changed")
+  end
+end
+
 -- U6: a measure makes every check a write makes (except room) by the same trap
 -- and latches nothing; it goes on counting after a trapped call.
 function TestU6MeasureTrapsLikeWrite()

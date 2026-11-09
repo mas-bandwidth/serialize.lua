@@ -212,3 +212,24 @@ function TestBitpacker()
   full:writeBits(0, 32)
   raises(function() full:writeBits(0, 1) end, "serialize: bit writer overflow")
 end
+
+-- Flush ends the write: a write after a flush that stored a partial word
+-- raises, as the C reference asserts, and leaves the flushed bytes as they were.
+function TestBitWriterWriteAfterFlushRaises()
+  local w = serialize.BitWriter.new(16)
+  w:writeBits(0xAB, 8)
+  w:flushBits()
+  raises(function() w:writeBits(0xCD, 8) end, "serialize: bit writer write after flush")
+  raises(function() w:writeBytes("0123456789ABCDEFG") end, "serialize: bit writer write after flush")
+  check(w:bitsWritten() == 8 and w:data() == "\xab", "the raised writes changed the writer")
+
+  -- a flush on a word boundary stores nothing, and the writer goes on
+  local b = serialize.BitWriter.new(16)
+  b:writeBits(0, 32)
+  b:writeBits(0, 32)
+  b:flushBits()
+  b:writeBits(0xCD, 8)
+  b:writeBytes("x")
+  b:flushBits()
+  check(b:data() == string.rep("\0", 8) .. "\xcdx", "a flush on a word boundary")
+end
