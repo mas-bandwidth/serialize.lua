@@ -174,6 +174,33 @@ function TestSerializeInt128SignedDivMod()
     eq(I.div(x, y), wantQ, "Int128 div " .. c[1] .. "/" .. c[2])
     eq(I.mod(x, y), wantR, "Int128 mod " .. c[1] .. "/" .. c[2])
   end
+  -- serialize.go TestInt128 divCases, with two-lane expected pairs:
+  -- the 7/3 sign quadrants, -1/2, the MinInt128 boundaries and
+  -- MaxInt128 divided by zero
+  local divCases = {
+    { { lo = 7, hi = 0 }, { lo = 3, hi = 0 }, { lo = 2, hi = 0 }, { lo = 1, hi = 0 } },
+    { { lo = -7, hi = -1 }, { lo = 3, hi = 0 }, { lo = -2, hi = -1 }, { lo = -1, hi = -1 } },
+    { { lo = 7, hi = 0 }, { lo = -3, hi = -1 }, { lo = -2, hi = -1 }, { lo = 1, hi = 0 } },
+    { { lo = -7, hi = -1 }, { lo = -3, hi = -1 }, { lo = 2, hi = 0 }, { lo = -1, hi = -1 } },
+    { { lo = -1, hi = -1 }, { lo = 2, hi = 0 }, { lo = 0, hi = 0 }, { lo = -1, hi = -1 } },
+    { { lo = 0, hi = 0x8000000000000000 }, { lo = 2, hi = 0 },
+      { lo = 0, hi = 0xc000000000000000 }, { lo = 0, hi = 0 } },
+    { { lo = 0, hi = 0x8000000000000000 }, { lo = 1, hi = 0 },
+      { lo = 0, hi = 0x8000000000000000 }, { lo = 0, hi = 0 } },
+    { { lo = 0, hi = 0x8000000000000000 }, { lo = -1, hi = -1 },
+      { lo = 0, hi = 0x8000000000000000 }, { lo = 0, hi = 0 } },
+    { { lo = 0xffffffffffffffff, hi = 0x7fffffffffffffff }, { lo = 0, hi = 0 },
+      { lo = 0, hi = 0 }, { lo = 0, hi = 0 } },
+  }
+  for i, c in ipairs(divCases) do
+    local x, y, wantQ, wantR = c[1], c[2], c[3], c[4]
+    local label = "Int128 divCases[" .. i .. "]"
+    local q, r = I.divMod(x, y)
+    eq(q, wantQ, label .. " divMod quotient")
+    eq(r, wantR, label .. " divMod remainder")
+    eq(I.div(x, y), wantQ, label .. " div")
+    eq(I.mod(x, y), wantR, label .. " mod")
+  end
   -- a dividend wider than 64 bits: 2^64 / 3 and its negation
   local wide = { lo = 0, hi = 1 }
   local q, r = I.divMod(wide, I.from64(3))
