@@ -199,12 +199,13 @@ local function decode(s, iv, maxInt, delta, min)
   return true, v
 end
 
--- IMPLEMENTING.md, "The check model", and U9: on a write and a measure, a
--- declaration whose delta (max - min) or delta / res is not finite in float32
--- is write misuse, and traps, never clamped: (0, 1e38, 1e-38) would otherwise
--- clamp values to 4294967040 and send a field nobody declared. The top decode
--- min + delta is checked too (checkTopDecode). A read derives as the standard
--- says and refuses a non-finite decode at runtime, so these are write side.
+-- IMPLEMENTING.md, "The check model", U7 and U9: a declaration whose delta
+-- (max - min) or delta / res is not finite in float32 is never clamped:
+-- (0, 1e38, 1e-38) would otherwise clamp values to 4294967040 and carry a
+-- field nobody declared. The declaration check (compressed.check) refuses it:
+-- a write and a measure trap, a read refuses as value_out_of_range before any
+-- bit moves. The write side checks the top decode min + delta too
+-- (checkTopDecode); a read refuses a non-finite decode at runtime.
 local PANIC_DELTA = "serialize: compressed float declaration's delta max - min must be finite in float32"
 local PANIC_VALUES = "serialize: compressed float declaration's delta / resolution must be finite in float32"
 local function checkWriteDeclaration(min, max, res)
@@ -239,6 +240,9 @@ local compressed = {
     if not (fround(min) < fround(max)) or not (fround(resolution) > 0) then
       return PANIC_FLOAT_PARAMS
     end
+    local delta = fround(fround(max) - fround(min))
+    if not isFinite(delta) then return PANIC_DELTA end
+    if not isFinite(fround(delta / fround(resolution))) then return PANIC_VALUES end
     return nil
   end,
   checkValue = function(value)

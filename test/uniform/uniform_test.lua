@@ -46,6 +46,21 @@ function TestU1WriteBufferIsAMultipleOf8()
   end
 end
 
+-- U7, U16: a compressed float read whose delta max - min or delta / res is not
+-- finite in float32 refuses as value_out_of_range before any bit moves.
+function TestU7CompressedFloatReadRefusesNonFiniteDeclaration()
+  local data = "\1\0\0\0"
+  refusedRead("compressed delta / res not finite", data, function(rs, h)
+    return rs:serializeCompressedFloat(h, 0.0, 1e38, 1e-38)
+  end)
+  refusedRead("compressed delta not finite", data, function(rs, h)
+    return rs:serializeCompressedFloat(h, -3e38, 3e38, 1.0)
+  end)
+  refusedRead("compressed delta not finite, short buffer", "\1\0", function(rs, h)
+    return rs:serializeCompressedFloat(h, -3e38, 3e38, 1.0)
+  end)
+end
+
 -- U3, U4: the writer checks UTF-8 and NUL on a string write, as the reader
 -- does: a NUL first, then Table 3-7. A string that fails is write misuse and
 -- traps (U9), naming the reason, with nothing written and nothing latched.
