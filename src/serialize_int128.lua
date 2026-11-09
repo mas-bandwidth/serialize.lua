@@ -124,8 +124,17 @@ function U.mul(a, b)
   return { lo = lo, hi = hi & 0xffffffffffffffff }
 end
 
+-- A shift count is a non-negative integer; 128 or more shifts every bit out
+-- (serialize.go Uint128.Lsh/Rsh).
+local function checkShift(n)
+  if math_type(n) ~= "integer" or n < 0 then
+    error("serialize: a shift count must be a non-negative integer", 0)
+  end
+end
+
 function U.lsh(v, n)
-  n = n % 128
+  checkShift(n)
+  if n >= 128 then return { lo = 0, hi = 0 } end
   if n == 0 then return { lo = v.lo, hi = v.hi } end
   if n < 64 then
     return {
@@ -137,7 +146,8 @@ function U.lsh(v, n)
 end
 
 function U.rsh(v, n)
-  n = n % 128
+  checkShift(n)
+  if n >= 128 then return { lo = 0, hi = 0 } end
   if n == 0 then return { lo = v.lo, hi = v.hi } end
   if n < 64 then
     return {
@@ -293,6 +303,7 @@ function I.lsh(v, n)
 end
 
 function I.rsh(v, n)
+  checkShift(n)
   if n >= 128 then
     if I.isNegative(v) then
       return { lo = 0xffffffffffffffff, hi = 0xffffffffffffffff }
