@@ -246,7 +246,11 @@ function I.mul(a, b)
 end
 
 function I.divMod(x, y)
-  local q, r = U.divMod(I.uint128(x), I.uint128(y))
+  local ux = I.uint128(x)
+  if I.isNegative(x) then ux = U.neg(ux) end
+  local uy = I.uint128(y)
+  if I.isNegative(y) then uy = U.neg(uy) end
+  local q, r = U.divMod(ux, uy)
   if I.isNegative(x) ~= I.isNegative(y) then
     q = U.neg(q)
   end
