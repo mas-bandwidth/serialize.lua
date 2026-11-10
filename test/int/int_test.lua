@@ -4,7 +4,7 @@
 -- bytes, refusal with the destination untouched and the stream terminal), the
 -- per-file record count equal to the file's count, serialize.go's TestBitsRequired,
 -- TestBitsRequired64 and TestSerializeInt64FullRange edge cases, and the writer's
--- value_out_of_range latch for a value one past each bound.
+-- value_out_of_range trap for a value one past each bound.
 
 local serialize = require("serialize")
 

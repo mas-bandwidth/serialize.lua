@@ -5,10 +5,9 @@
 -- records read and (when canonical) write the exact bytes; non-finite patterns
 -- are refused as non_finite_float with the holder untouched. A non-finite value
 -- is write misuse, tested after the float32 narrowing: the writer and the
--- measure trap on it (IMPLEMENTING.md U9, U6). fround
--- pins Go's float32() conversion on a table of edges computed by Go at
--- `.ref/gen_fround_edges` (JOB.md). No real time, no sockets, no network: io
--- only reads the conformance files.
+-- measure trap on it (IMPLEMENTING.md U9, U6). fround pins Go's float32()
+-- conversion on a table of edges checked against Go's float32() bit for bit.
+-- No real time, no sockets, no network: io only reads the conformance files.
 
 local serialize = require("serialize")
 local flt = require("serialize_float")
@@ -95,7 +94,7 @@ function TestSerializeFloat()
     "the echo keeps the first reason")
 
   -- -------------------------------------------------------------------------
-  -- fround: Go's float32() on a table of edges computed at .ref (JOB.md).
+  -- fround: Go's float32() on a table of edges, checked bit for bit.
   -- Each entry is { double bits, expected float32 bits }.
   -- -------------------------------------------------------------------------
   local FROUND = {
@@ -179,7 +178,7 @@ function TestSerializeFloat()
     { 0x76973EA0E7790949, 0x7F800000 },
     { 0x0BF1496E2970124B, 0x00000000 },
     { 0x66B609B2E88D83A5, 0x7F800000 },
-    -- subnormal rounding regressions (JOB.md attempt 2): single rounding of
+    -- subnormal rounding regressions: single rounding of
     -- the exact double onto the 2^-149 grid, not double-rounding through a
     -- pre-rounded 24-bit significand; each was computed by Go's float32().
     { 0x38079409D4CD951F, 0x005E5027 },
