@@ -300,9 +300,9 @@ local precomputed = {
   -- must be exactly what compressedFloatParams derives; anything else raises
   -- panicPrecomputedFloat (DESIGN.md (e)). delta must be exactly a float32.
   -- maxIntegerValue lies in [1, 4294967040], the uint32 range the
-  -- derivation clamps to, before bitsRequired sees it (IMPLEMENTING.md U16;
-  -- AUDIT-LEDGER 2026-10-27, lua M: 2^32 passed with bits 0 and 2^32 + 5 with
-  -- bits 3, because bitsRequired works over 32 bits). Returns the rule's
+  -- derivation clamps to, before bitsRequired sees it (IMPLEMENTING.md U16:
+  -- bitsRequired works over 32 bits, so 2^32 would otherwise pass with bits 0
+  -- and 2^32 + 5 with bits 3). Returns the rule's
   -- message, or nil.
   check = function(maxIntegerValue, bitsN, delta, min)
     local e = numberError(delta, "delta") or numberError(min, "min")

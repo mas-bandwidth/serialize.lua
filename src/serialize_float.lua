@@ -139,7 +139,7 @@ local function float32Bits(v)
   -- subnormal single: the exact value sig*2^p rounded straight onto the 2^-149
   -- grid, ties to even, in one rounding from the exact sig (DESIGN.md (e)).
   -- Rounding the pre-rounded 24-bit t instead would double-round and pick the
-  -- wrong neighbor (JOB.md attempt 2). d = (p+149) negation > 0.
+  -- wrong neighbor. d = (p+149) negation > 0.
   local m23 = roundDivByPow2(sig, -p - 149)
   if m23 >= (1 << 23) then
     return (s << 31) | (1 << 23)

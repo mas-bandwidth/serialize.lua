@@ -95,8 +95,8 @@ local function testRealText()
   end
 end
 
--- Allocate before check (PORT-BRIEF, 2026-10-22): the wire-claimed length is
--- checked against the bytes that remain BEFORE anything is taken, so a tiny
+-- Allocate before check: the wire-claimed length is checked against the bytes
+-- that remain BEFORE anything is taken, so a tiny
 -- stream claiming a huge string is refused as past_end at once. _readBytes
 -- compares the count with what remains, in bytes, before it reads.
 local function testClaimedLengthCheckedFirst()

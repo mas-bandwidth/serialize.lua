@@ -30,8 +30,9 @@ local PAST_END = Refusal.PastEnd
 local type, error = type, error
 local mathtype = math.type
 
--- serialize.go's panicBufferSize (serialize.go: panicBufferSize) is raised on API
--- misuse, before anything is touched, on a healthy stream and a failed one alike.
+-- serialize.go's panicBufferSize (serialize.go: panicBufferSize) is the rule's
+-- message: a write or a measure raises it before anything is touched; a read
+-- refuses value_out_of_range after the latch check.
 local PANIC_BUFFER_SIZE = "serialize: string buffer size must be in [1,1<<31)"
 
 -- A declaration check returns the rule's message, or nil (serialize_stream.lua,
