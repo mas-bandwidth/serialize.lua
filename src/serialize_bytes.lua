@@ -59,15 +59,6 @@ local function room(s, fieldBits, payloadBytes)
   return at + (8 - at % 8) % 8 + payloadBytes * 8 <= s._numBits
 end
 
--- bits_required(0, max): the fewest bits that hold every value in [0, max],
--- 0 for the degenerate range [0,0] (STANDARD.md, Integers).
-local function bitsRequired0toMax(max)
-  if max == 0 then return 0 end
-  local w = 1
-  while (1 << w) <= max do w = w + 1 end
-  return w
-end
-
 -- validUTF8 implements Unicode Table 3-7 (STANDARD.md, string): overlong forms,
 -- encoded surrogates, code points above 10FFFF and truncated sequences are all
 -- refused.
@@ -161,7 +152,7 @@ methods.serializeString = {
   end,
   write = function(s, value, bufferSize)
     checkText(s, value, bufferSize)
-    local w = bitsRequired0toMax(bufferSize - 1)
+    local w = stream.family("bits", "serializeString").api.bitsRequired(0, bufferSize - 1)
     if not room(s, w, #value) then return s:_fail(PAST_END) end
     if w > 0 then
       if not s:_writeBits(#value, w) then return false end
@@ -178,7 +169,7 @@ methods.serializeString = {
   -- validated (invalid_utf8), so 02 FF 00 is embedded_nul. The bytes go back
   -- exactly as read: no normalization, no BOM stripping, no replacement.
   read = function(s, bufferSize)
-    local w = bitsRequired0toMax(bufferSize - 1)
+    local w = stream.family("bits", "serializeString").api.bitsRequired(0, bufferSize - 1)
     local length
     if w == 0 then
       length = 0
@@ -197,7 +188,7 @@ methods.serializeString = {
   measure = function(s, value, bufferSize)
     -- the writer's checks, by the same trap; a measure latches nothing (U6)
     checkText(s, value, bufferSize)
-    local w = bitsRequired0toMax(bufferSize - 1)
+    local w = stream.family("bits", "serializeString").api.bitsRequired(0, bufferSize - 1)
     if w > 0 then
       if not s:_measure(w) then return false end
     end

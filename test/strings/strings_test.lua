@@ -152,3 +152,29 @@ function TestSerializeStrings()
   testClaimedLengthCheckedFirst()
   testStringLengthOnWrite()
 end
+
+-- The string length field is an unsigned width over [0, bufferSize - 1].
+-- Witness that every entry point reaches the shared bits-family helper rather
+-- than carrying a private copy: a wrapper counts each call, and write, read and
+-- measure all pass through it.
+function TestStringLengthUsesSharedBitsHelper()
+  local bits = require("serialize_bits")
+  local shared = bits.api.bitsRequired
+  local calls = 0
+  bits.api.bitsRequired = function(min, max)
+    calls = calls + 1
+    return shared(min, max)
+  end
+  local ok, err = pcall(function()
+    local ws = serialize.WriteStream.new(64)
+    check(ws:serializeString({ value = "abc" }, 16), "write")
+    ws:flush()
+    local rs = serialize.ReadStream.new(ws:data())
+    local h = {}
+    check(rs:serializeString(h, 16) and h.value == "abc", "read")
+    check(serialize.MeasureStream.new():serializeString({ value = "abc" }, 16), "measure")
+  end)
+  bits.api.bitsRequired = shared
+  check(ok, err)
+  check(calls == 3, "string length fields use the shared bits helper (calls " .. calls .. ")")
+end
