@@ -12,9 +12,10 @@ and the corpus is [conformance/](conformance/) with its negative controls in
 [conformance-controls/](conformance-controls/); STANDARD.md, IMPLEMENTING.md and
 both directories are vendored VERBATIM from
 [mas-bandwidth/serialize](https://github.com/mas-bandwidth/serialize) at tag
-`v2.1.3` (standard 2.1, format 2.0 — the `rejected` refusal reason,
+`v2.1.4` (standard 2.1, format 2.0 — the `rejected` refusal reason,
 IMPLEMENTING.md's uniform rules U1–U16 with the 2.1.3 rulings on U3, U6, U9
-and U15, and the `reject` step), by `tools/revendor.sh v2.1.3`, and CI
+and U15, the 2.1.4 statements of U7, U11 and U16, and the `reject` step), by
+`tools/revendor.sh v2.1.4`, and CI
 diffs them against the tag on
 every run. Where STANDARD.md is silent,
 [serialize.go](https://github.com/mas-bandwidth/serialize.go) `v2.0.0` (module

@@ -1,5 +1,5 @@
 -- test/uniform: the uniform behaviour rules U1 to U16 of IMPLEMENTING.md
--- (vendored from serialize v2.1.3) that this port proves with its own tests.
+-- (vendored from serialize v2.1.4) that this port proves with its own tests.
 -- Run by `make test T=uniform` from the repository root. Each test names its
 -- rule. Unit tests: no real time, no sockets, no network: io only reads the
 -- repository's documents.
@@ -310,11 +310,13 @@ function TestDocumentationReferences()
     f:close()
     return text
   end
-  for _, path in ipairs({
-    "README.md", "DESIGN.md", "ROADMAP.md", "docs/roadmap.sexp", ".github/workflows/ci.yml",
-  }) do
+  for _, path in ipairs({ "README.md", "DESIGN.md", ".github/workflows/ci.yml" }) do
     local text = read(path)
-    check(text:find("2.1.3", 1, true) ~= nil, path .. " states the reference pin")
+    check(text:find("v2.1.4", 1, true) ~= nil, path .. " states the reference pin")
+  end
+  for _, path in ipairs({ "ROADMAP.md", "docs/roadmap.sexp" }) do
+    local text = read(path)
+    check(text:find("2.1.3 rulings", 1, true) ~= nil, path .. " states the reference rulings it keeps")
   end
   local readme = read("README.md")
   check(readme:find("version 2.1.3", 1, true) ~= nil, "README.md states the port version")
