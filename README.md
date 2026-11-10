@@ -2,7 +2,7 @@
 
 A simple bitpacking serializer for Lua, wire compatible with the C++ [serialize](https://github.com/mas-bandwidth/serialize) library and [serialize.go](https://github.com/mas-bandwidth/serialize.go): the same values produce the same bytes.
 
-The wire format is serialize's [STANDARD.md](STANDARD.md), **format version 2.0**: the wire carries only integers and bytes, and every value has exactly one encoding. STANDARD.md, IMPLEMENTING.md, the conformance corpus in [conformance/](conformance/) and its negative controls in [conformance-controls/](conformance-controls/) are vendored verbatim from mas-bandwidth/serialize `v2.1.1` (`tools/revendor.sh v2.1.1`; CI diffs them against the tag). The port passes every vector with its stated refusal reason, and every sabotage control fails exactly its `.expected` list. The pinned interpreter is Lua 5.4.8 (PUC-Rio). [DESIGN.md](DESIGN.md) is the design: the API, the bit order, the number model, loading, and the file each part lives in.
+The wire format is serialize's [STANDARD.md](STANDARD.md), **format version 2.0**: the wire carries only integers and bytes, and every value has exactly one encoding. STANDARD.md, IMPLEMENTING.md, the conformance corpus in [conformance/](conformance/) and its negative controls in [conformance-controls/](conformance-controls/) are vendored verbatim from mas-bandwidth/serialize `v2.1.3` (`tools/revendor.sh v2.1.3`; CI diffs them against the tag). The port passes every vector with its stated refusal reason, and every sabotage control fails exactly its `.expected` list. The port is version 2.1.3. Its pinned interpreter is Lua 5.4.8 (PUC-Rio); it is also compatible with Lua 5.3 and Lua 5.5, and Lua 5.1, Lua 5.2 and LuaJIT are not supported. It requires 64-bit integers and IEEE 754 binary64 floats; an interpreter built with `LUA_32BITS` or with a non-binary64 float type is refused at load, by name. [DESIGN.md](DESIGN.md) is the design: the API, the bit order, the number model, loading, and the file each part lives in.
 
 A packet reader reads the top-level object and then its end, which refuses trailing bytes (`trailing_data`) and set padding in the final byte (`nonzero_padding`). A refused read reports the first refusal's reason, spelled as STANDARD.md spells it:
 
@@ -18,7 +18,7 @@ A write or a measure refuses nothing. Lua has no release build, so this port is 
     make fuzz            # differential fuzzing against serialize.go v2 (needs Go)
 
     -- the consumer replaces package.path and empties package.cpath (DESIGN.md (f))
-    package.path = "/path/to/serialize.lua/src/?.lua"
+    package.path = "<dir>/?.lua"
     package.cpath = ""
     local serialize = require("serialize")
 

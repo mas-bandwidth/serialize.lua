@@ -21,6 +21,7 @@ local serializeStream = require("serialize_stream")
 
 local VALUE_OUT_OF_RANGE = serializeStream.Refusal.ValueOutOfRange
 local NON_CANONICAL = serializeStream.Refusal.NonCanonical
+local PAST_END = serializeStream.Refusal.PastEnd
 
 local mathtype = math.type
 local PANIC_INT_RELATIVE_DOMAIN = "serialize: int relative previous must be in [0,2147483647]"
@@ -89,6 +90,22 @@ methods.write = function(stream, previous, current)
     return stream:_fail(VALUE_OUT_OF_RANGE)
   end
   local difference = current - previous
+  local bits = 1
+  if difference ~= 1 then
+    local matched = false
+    for _, b in ipairs(BUCKETS) do
+      bits = bits + 1
+      if difference <= b.max then
+        bits = bits + b.bits
+        matched = true
+        break
+      end
+    end
+    if not matched then bits = bits + 32 end
+  end
+  if stream._bits + bits > stream._numBits then
+    return stream:_fail(PAST_END)
+  end
   if not stream:_writeBits(difference == 1 and 1 or 0, 1) then return false end
   if difference == 1 then return true end
   for _, b in ipairs(BUCKETS) do

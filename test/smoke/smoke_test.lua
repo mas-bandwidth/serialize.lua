@@ -29,8 +29,9 @@ local function installProbe()
         serializeProbe = {
           check = function(bits)
             if math.type(bits) ~= "integer" or bits < 1 or bits > 64 then
-              error("serialize: probe bits must be in [1,64]", 0)
+              return "serialize: probe bits must be in [1,64]"
             end
+            return nil
           end,
           write = function(s, value, bits) return s:_writeBits(value, bits) end,
           read = function(s, bits)
@@ -120,7 +121,12 @@ function TestSmoke()
   -- a holder is a table; misuse raises before anything else
   local probe = S.method(PROBE, "serializeProbe", 1)
   raises(function() probe.write(streams.W, 1, 1) end, "serialize: serializeProbe takes a holder")
-  raises(function() probe.read(streams.R, { value = 0 }, 0) end, "serialize: probe bits must be in [1,64]")
+  -- a declaration check returns its message: a write raises it, a read refuses it
+  raises(function() probe.write(streams.W, { value = 1 }, 0) end, "serialize: probe bits must be in [1,64]")
+  local badRead = serialize.ReadStream.new("")
+  check(probe.read(badRead, { value = 0 }, 0) == false, "a bad declaration read is refused")
+  check(badRead:error() == serialize.Refusal.ValueOutOfRange,
+    "a bad declaration read latches value_out_of_range, got " .. tostring(badRead:error()))
 
   -- 4. the latch: on a ReadStream over empty data a failing call latches; a later
   -- call fails, consumes nothing and leaves its holder unchanged; the first error
@@ -241,4 +247,19 @@ function TestSmoke()
   package.preload["serialize_" .. PROBE] = nil
   for _, p in ipairs(shadows) do check(io.open(p, "r") == nil, p .. " was not removed") end
   if not ok then error(err, 0) end
+end
+
+-- The number model guard is a pure function of the observed model: the pinned
+-- interpreter's 64-bit integers and binary64 floats pass it, while a narrower
+-- or wider float model and a 32-bit integer are refused by name.
+function TestNumberModelGuard()
+  local S = require("serialize_stream")
+  check(S.numberModelError(math.maxinteger, 2^24 + 1 ~= 2^24, 2^53 + 1 == 2^53) == nil,
+    "the pinned 64-bit integer, binary64 float interpreter passes the guard")
+  local e = S.numberModelError(math.maxinteger, false, true)
+  check(e ~= nil and e:find("binary64", 1, true) ~= nil, "a narrower float model is refused by name")
+  e = S.numberModelError(math.maxinteger, true, false)
+  check(e ~= nil and e:find("binary64", 1, true) ~= nil, "a wider float model is refused by name")
+  e = S.numberModelError(2147483647, false, false)
+  check(e ~= nil and e:find("LUA_32BITS", 1, true) ~= nil, "a 32-bit maxinteger is still refused by name")
 end

@@ -19,23 +19,39 @@
 
 local M = {}
 
--- THE INTEGER WIDTH GUARD. This library's number model is Lua 5.4's 64-bit
--- integer (DESIGN.md (c)): uint32 and uint64 fields, the 8-byte window loads and
--- the 128-bit halves all assume it. An interpreter built with LUA_32BITS has a
--- 32-bit integer, on which hostile bytes would decode as wrong values or raise
--- from string.unpack, so the library refuses to load there, by name.
+-- THE NUMBER MODEL GUARD. This library's number model is Lua 5.4's 64-bit
+-- integer (DESIGN.md (c)) and IEEE 754 binary64 float: uint32 and uint64
+-- fields, the 8-byte window loads, the 128-bit halves and the <d packing all
+-- assume both. An interpreter built with LUA_32BITS has a 32-bit integer, and
+-- one built with a non-binary64 float type has a narrower or wider significand,
+-- so the library refuses to load there, by name.
 local PANIC_INTEGER_WIDTH = "serialize: this library requires 64-bit Lua integers "
   .. "(math.maxinteger is 2^63 - 1); an interpreter built with LUA_32BITS is not supported"
 
-function M.integerWidthError(maxinteger)
+local PANIC_FLOAT_WIDTH = "serialize: this library requires IEEE 754 binary64 Lua floats "
+  .. "(2^24 + 1 ~= 2^24 and 2^53 + 1 == 2^53); an interpreter built with a non-binary64 "
+  .. "float type (LUA_FLOAT_TYPE=LUA_FLOAT_FLOAT, for example) is not supported"
+
+-- The guard as a pure function of the observed model. exactAt24 is
+-- 2^24 + 1 ~= 2^24: a significand wider than binary32's 24 bits. roundsAt53 is
+-- 2^53 + 1 == 2^53: a significand no wider than binary64's 53 bits. Both hold
+-- only for binary64.
+function M.numberModelError(maxinteger, exactAt24, roundsAt53)
   if maxinteger ~= 0x7fffffffffffffff then
     return PANIC_INTEGER_WIDTH
+  end
+  if not exactAt24 or not roundsAt53 then
+    return PANIC_FLOAT_WIDTH
   end
   return nil
 end
 
+function M.integerWidthError(maxinteger)
+  return M.numberModelError(maxinteger, true, true)
+end
+
 do
-  local e = M.integerWidthError(math.maxinteger)
+  local e = M.numberModelError(math.maxinteger, 2^24 + 1 ~= 2^24, 2^53 + 1 == 2^53)
   if e ~= nil then error(e, 0) end
 end
 
