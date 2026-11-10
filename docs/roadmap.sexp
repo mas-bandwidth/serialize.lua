@@ -1,5 +1,5 @@
 ; The serialize.lua roadmap: the data ROADMAP.md is generated from.
-; Same shape as nova-sprint's docs/roadmap.sexp: data, never evaluated. Edit this file, then
+; Data, never evaluated. Edit this file, then
 ; regenerate ROADMAP.md with the roadmap tool (github.com/mas-bandwidth/nova-tools/tools/roadmap):
 ;   roadmap --file docs/roadmap.sexp --out ROADMAP.md
 ; Never edit ROADMAP.md by hand. Created 2026-10-27 for the work left open when the port moved to
