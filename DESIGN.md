@@ -12,10 +12,9 @@ and the corpus is [conformance/](conformance/) with its negative controls in
 [conformance-controls/](conformance-controls/); STANDARD.md, IMPLEMENTING.md and
 both directories are vendored VERBATIM from
 [mas-bandwidth/serialize](https://github.com/mas-bandwidth/serialize) at tag
-`v2.1.1` (commit `bd3d67e23c8acc2c45eff69633dbe16c029a2cba`: standard
-2.1, format 2.0 — the `rejected` refusal reason, IMPLEMENTING.md's uniform
-rules U1–U16 with the 2.1.1 rulings on U3, U6, U9 and U15, and the `reject`
-step), by `tools/revendor.sh v2.1.1`, and CI
+`v2.1.3` (standard 2.1, format 2.0 — the `rejected` refusal reason,
+IMPLEMENTING.md's uniform rules U1–U16 with the 2.1.3 rulings on U3, U6, U9
+and U15, and the `reject` step), by `tools/revendor.sh v2.1.3`, and CI
 diffs them against the tag on
 every run. Where STANDARD.md is silent,
 [serialize.go](https://github.com/mas-bandwidth/serialize.go) `v2.0.0` (module
@@ -31,8 +30,8 @@ unchanged.
 
 **The oracle.** Every family card matches serialize's own vectors byte for
 byte: the corpus in `conformance/*.txt` (read by the test itself through `io`),
-and the C++ and Go test vectors the card's family has (`.ref/serialize/test.cpp`,
-`.ref/serialize.go/*_test.go`), cited by test name.
+and, for a family whose reference has them, the C++ and Go test vectors, whose
+cases the card's own tests restate and cite by test name.
 
 **The interpreter.** PUC-Rio Lua 5.4.8, built from source by `make dist-lua`
 (the pin, URL and sha256 are schema's `make/lua.mk`'s). Libraries considered:
@@ -223,7 +222,7 @@ ReadStream, never straight to a BitReader.
    names for the bitwise operations.
 7. **The refusal reasons are strings**: `stream:error()` is the reason as
    STANDARD.md spells it (`"past_end"`, `"embedded_nul"`, ...), and
-   `serialize.Refusal` names the eight in serialize.go's order. A Lua string
+   `serialize.Refusal` names the nine in serialize.go's order. A Lua string
    compares by value, so a caller tests `s:error() == serialize.Refusal.PastEnd`.
    They are a READER's reasons only (IMPLEMENTING.md U9): a write or a
    measure stream never latches one. Write misuse traps instead, and the
@@ -341,7 +340,7 @@ LuaJIT (Lua 5.1, no integer subtype) is not covered; a LuaJIT build would take
 the Luau port's number model, not this one. Nor is a Lua 5.4 built with
 `LUA_32BITS`: its 32-bit integer cannot hold a uint32 or a 64-bit window, so
 `serialize_stream.lua` refuses to load there, raising by name, rather than
-decode hostile bytes wrongly (AUDIT-LEDGER 2026-10-27, lua L).
+decode hostile bytes wrongly.
 
 ## (d) BYTES
 
@@ -625,13 +624,15 @@ return {
 ```
 
 - `check(...)` receives the call's arguments other than the holder, and
-  raises on misuse. It runs before the latch check, on every stream.
+  returns the rule's message, or nil. On a write or a measure the stream raises
+  the message; on a read it runs after the latch check and refuses
+  `value_out_of_range` before any bit moves (U7, U16).
 - `checkValue(...)` (optional) receives the arguments with `holder.value` in
   the holder's place, on write and measure only, and raises on a value of the
   wrong Lua type or outside its Go type's domain ((c)), or a `serializeBytes`
-  value whose length is not `numBytes`. It also runs before the latch check,
-  so misuse raises on a failed stream too. A value inside its Go type but
-  outside `[min,max]` is caught by the write and measure arms: they trap
+  value whose length is not `numBytes`. It runs before the write or measure
+  arm, so misuse raises before anything is written. A value inside its Go type
+  but outside `[min,max]` is caught by the write and measure arms: they trap
   (U9).
 - `write(stream, ...)` and `measure(stream, ...)` receive the arguments with
   `holder.value` in the holder's place (`serializeIntRelative`:

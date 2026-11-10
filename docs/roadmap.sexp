@@ -8,7 +8,7 @@
 ; u9-reject-checked-only. Landed work is in git, so their items are gone from here.
 (roadmap "v1"
  :title "serialize.lua roadmap"
- :text "Planned work for serialize.lua. At 2.1.1 (2026-10-27) the port keeps every uniform rule U1 to U16 of IMPLEMENTING.md, as the reference's 2.1.1 rulings on U6, U9 and U15 read them: write and measure misuse traps (error()) in every run and never latches, and serialize.copyString is carried. Each is proved in test/uniform and test/u9. No work is open; a rule the reference adds or tightens later lands here first. Landed work is in git."
+ :text "Planned work for serialize.lua. At 2.1.3 (2026-10-27) the port keeps every uniform rule U1 to U16 of IMPLEMENTING.md, as the reference's 2.1.3 rulings on U6, U9 and U15 read them: write and measure misuse traps (error()) in every run and never latches, and serialize.copyString is carried. Each is proved in test/uniform and test/u9. No work is open; a rule the reference adds or tightens later lands here first. Landed work is in git."
 
  :groups
  (

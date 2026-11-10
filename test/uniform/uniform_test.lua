@@ -1,8 +1,9 @@
 -- test/uniform: the uniform behaviour rules U1 to U16 of IMPLEMENTING.md
--- (vendored from serialize v2.1.1) that this port proves with its own tests,
+-- (vendored from serialize v2.1.3) that this port proves with its own tests,
 -- and the 2026-10-27 audit findings for this port. Run by `make test
 -- T=uniform` from the repository root. Each test names its rule. Unit tests:
--- no real time, no sockets, no files.
+-- no real time, no sockets, no network: io only reads the repository's
+-- documents.
 
 local serialize = require("serialize")
 local S = require("serialize_stream")
@@ -159,8 +160,8 @@ function TestU7ReadMisuseRefusesNeverRaises()
     "serialize: string buffer size must be in [1,1<<31)")
 end
 
--- U8 (AUDIT-LEDGER 2026-10-27, lua M, audit/bits_overwide.lua): a value that
--- does not fit its bit width is caught, never masked. The write traps (U9)
+-- U8: a value that does not fit its bit width is caught, never masked.
+-- The write traps (U9)
 -- and writes nothing; the measure traps the same way (U6).
 function TestU8OverwideBitsAreCaught()
   local cases = {
@@ -260,8 +261,8 @@ function TestU14RefusalName()
   check(rs:refusal() == "rejected", "a rejected stream's refusal is rejected")
 end
 
--- U16 (AUDIT-LEDGER 2026-10-27, lua M, audit/precomputed_domain.lua): the
--- precomputed compressed_float's maxIntegerValue lies in [1, 4294967040],
+-- U16: the precomputed compressed_float's maxIntegerValue lies in
+-- [1, 4294967040],
 -- judged before bitsRequired narrows it to 32 bits. Read refuses
 -- value_out_of_range before any bit moves; write and measure raise.
 function TestU16PrecomputedMaxIntegerValueDomain()
@@ -291,12 +292,35 @@ function TestU16PrecomputedMaxIntegerValueDomain()
   check(ws:serializeCompressedFloatPrecomputed({ value = 0.5 }, maxInt, bits, delta, 0.0), "the top is accepted")
 end
 
--- AUDIT-LEDGER 2026-10-27, lua L (audit/int32_build.lua): the library refuses
--- to load on an interpreter built with LUA_32BITS. The guard is a pure
+-- The library refuses to load on an interpreter built with LUA_32BITS.
+-- The guard is a pure
 -- function of math.maxinteger, faked here; the pinned interpreter passes it.
 function TestIntegerWidthGuard()
   check(S.integerWidthError(math.maxinteger) == nil, "the pinned 64-bit interpreter passes the guard")
   local e = S.integerWidthError(2147483647)
   check(e ~= nil and e:find("LUA_32BITS", 1, true) ~= nil, "a 32-bit maxinteger is refused by name")
   check(S.integerWidthError(-1) ~= nil, "a wrapped maxinteger is refused")
+end
+
+-- The documents state the reference pin they carry, the port's own version and
+-- interpreter support, and the refusal list's size.
+function TestDocumentationReferences()
+  local function read(path)
+    local f = assert(io.open(path, "r"))
+    local text = f:read("a")
+    f:close()
+    return text
+  end
+  for _, path in ipairs({
+    "README.md", "DESIGN.md", "ROADMAP.md", "docs/roadmap.sexp", ".github/workflows/ci.yml",
+  }) do
+    local text = read(path)
+    check(text:find("2.1.3", 1, true) ~= nil, path .. " states the reference pin")
+  end
+  local readme = read("README.md")
+  check(readme:find("version 2.1.3", 1, true) ~= nil, "README.md states the port version")
+  for _, lua in ipairs({ "Lua 5.4", "Lua 5.3", "Lua 5.5", "Lua 5.1", "Lua 5.2", "LuaJIT" }) do
+    check(readme:find(lua, 1, true) ~= nil, "README.md names " .. lua)
+  end
+  check(read("DESIGN.md"):find("names the nine", 1, true) ~= nil, "DESIGN.md counts the refusal reasons")
 end
