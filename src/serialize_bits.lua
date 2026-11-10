@@ -22,6 +22,10 @@ local VALUE_OUT_OF_RANGE = require("serialize_stream").Refusal.ValueOutOfRange
 -- serialize.go's panic strings, for the misuse raises (DESIGN.md (g)).
 local PANIC_BITS_RANGE = "serialize: bits must be in [1,32]"
 local PANIC_BITS_RANGE64 = "serialize: bits must be in [1,64]"
+local PANIC_BITS_REQUIRED_INT = "serialize: bitsRequired bounds must be integers"
+local PANIC_BITS_REQUIRED_RANGE =
+  "serialize: bitsRequired bounds must be in [0,4294967295] (use bitsRequired64 for wider ranges)"
+local PANIC_MIN_MAX = "serialize: min must not be greater than max"
 
 local function intErr(field)
   error("serialize: " .. field .. " must be an integer", 2)
@@ -159,6 +163,13 @@ M.methods = {
 M.api = {
   -- STANDARD.md, int (ranged): bits_required over the unsigned 32-bit width.
   bitsRequired = function(min, max)
+    if mathtype(min) ~= "integer" or mathtype(max) ~= "integer" then
+      error(PANIC_BITS_REQUIRED_INT, 2)
+    end
+    if min < 0 or min > 4294967295 or max < 0 or max > 4294967295 then
+      error(PANIC_BITS_REQUIRED_RANGE, 2)
+    end
+    if min > max then error(PANIC_MIN_MAX, 2) end
     if min == max then return 0 end
     local d = (max - min) & 0xffffffff
     local n = 0
