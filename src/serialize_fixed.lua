@@ -146,7 +146,8 @@ local function readGroups128(s, numBits)
 end
 
 local fixed = {
-  -- DESIGN.md (h): check runs before the latch check, on every stream.
+  -- DESIGN.md (h): check returns the rule's message; a write or a measure
+  -- raises it, a read refuses value_out_of_range after the latch check.
   check = validateParams,
   checkValue = function(value, integerBits, fractionBits)
     if integerBits + fractionBits <= 64 then
