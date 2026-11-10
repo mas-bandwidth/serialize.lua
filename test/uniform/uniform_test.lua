@@ -160,6 +160,47 @@ function TestU7ReadMisuseRefusesNeverRaises()
     "serialize: string buffer size must be in [1,1<<31)")
 end
 
+-- U7: bytes of zero count with no destination (no holder, or a holder with no
+-- value) is not misuse on any stream: it performs the align and copies
+-- nothing. A positive count with no destination stays misuse: it raises on
+-- write and measure, and refuses on read.
+function TestU7ZeroCountBytesWithNoDestination()
+  local function noHolder() return nil end
+  local function emptyHolder() return {} end
+  for _, c in ipairs({ { "no holder", noHolder }, { "a holder with no value", emptyHolder } }) do
+    local what = c[1]
+    local ws = serialize.WriteStream.new(8)
+    check(ws:serializeBits({ value = 5 }, 3), what .. ": the prefix write")
+    local ok, r = pcall(function() return ws:serializeBytes(c[2](), 0) end)
+    check(ok and r == true, what .. ": the write was not accepted: " .. tostring(r))
+    check(ws:bitsProcessed() == 8, what .. ": the write did not align, at " .. ws:bitsProcessed() .. " bits")
+    ws:flush()
+    check(ws:data() == "\5", what .. ": the write produced the wrong bytes")
+
+    local ms = serialize.MeasureStream.new()
+    check(ms:serializeBits({ value = 5 }, 3), what .. ": the prefix measure")
+    ok, r = pcall(function() return ms:serializeBytes(c[2](), 0) end)
+    check(ok and r == true, what .. ": the measure was not accepted: " .. tostring(r))
+    check(ms:bitsProcessed() > 3, what .. ": the measure did not count the align")
+
+    local rs = serialize.ReadStream.new("\5")
+    check(rs:serializeBits({}, 3), what .. ": the prefix read")
+    local h = c[2]()
+    ok, r = pcall(function() return rs:serializeBytes(h, 0) end)
+    check(ok and r == true, what .. ": the read was not accepted: " .. tostring(r) .. " " .. tostring(rs:error()))
+    check(rs:ok() and rs:bitsProcessed() == 8, what .. ": the read did not align")
+    check(h == nil or h.value == "", what .. ": the read stored the wrong block")
+  end
+  raises(function() serialize.WriteStream.new(8):serializeBytes(nil, 4) end,
+    "serialize: serializeBytes takes a holder table")
+  raises(function() serialize.MeasureStream.new():serializeBytes(nil, 4) end,
+    "serialize: serializeBytes takes a holder table")
+  raises(function() serialize.WriteStream.new(8):serializeBytes({}, 4) end,
+    "serialize: serializeBytes takes a string value")
+  raises(function() serialize.MeasureStream.new():serializeBytes({}, 4) end,
+    "serialize: serializeBytes takes a string value")
+end
+
 -- U8: a value that does not fit its bit width is caught, never masked.
 -- The write traps (U9)
 -- and writes nothing; the measure traps the same way (U6).
