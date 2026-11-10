@@ -325,7 +325,8 @@ native 64-bit integer subtype (`math.maxinteger` is `9223372036854775807`,
 - **bool** is a Lua boolean. **float32** and **float64** are Lua numbers
   (doubles); a float32 holds the double that is exactly its float32 value (e).
   A number of either Lua subtype is accepted; an integer is converted to its
-  double value for the bit pattern.
+  double value for the bit pattern, and an integer with no exact double value
+  (above 2^53 in magnitude and not a multiple of its spacing) raises.
 - **A value of the wrong Lua type is API misuse and raises**, never a silent
   coercion: a float where an integer belongs (`1.0` included: `math.type`
   tells them apart exactly), an integer outside its Go type's domain (a
