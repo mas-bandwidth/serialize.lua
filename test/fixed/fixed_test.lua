@@ -44,6 +44,19 @@ end
 -- Byte identity with the int64 path for three Q formats (STANDARD.md, fixed).
 --------------------------------------------------------------------------------
 
+local SENTINEL = {}
+
+local function refusedFixedRead(data, ib, fb, min, max, msg)
+  local rs = serialize.ReadStream.new(data)
+  local h = { value = SENTINEL }
+  local ok, r = pcall(function() return rs:serializeFixed(h, ib, fb, min, max) end)
+  check(ok, msg .. ": the read raised: " .. tostring(r))
+  check(r == false, msg .. ": the read did not refuse")
+  check(rs:error() == serialize.Refusal.ValueOutOfRange, msg .. ": latched " .. tostring(rs:error()))
+  check(rs:bitsProcessed() == 0, msg .. ": the refused read consumed bits")
+  check(h.value == SENTINEL, msg .. ": the refused read wrote the holder")
+end
+
 local function byteIdentity(ib, fb, min, max, raw)
   local rawMin = min << fb
   local rawMax = max << fb
@@ -91,4 +104,17 @@ function TestSerializeFixed()
   byteIdentity(8, 8, -100, 100, -832)
   byteIdentity(16, 16, -32768, 32767, 1588444911)
   byteIdentity(32, 0, 0, 7, 5)
+
+  -- 6. bit counts outside the Q format storage widths
+  local data = string.rep("\0", 16)
+  refusedFixedRead(data, 1 << 62, 1 << 62, 0, 5, "Q format with oversized bit counts")
+  refusedFixedRead(data, math.maxinteger, 1, 0, 5, "Q format with an oversized integer bit count")
+
+  local wsWide = serialize.WriteStream.new(16)
+  local ok, err = pcall(function() wsWide:serializeFixed({ value = 0 }, math.maxinteger, 1, 0, 5) end)
+  check(not ok, "an oversized integer bit count did not trap on write")
+  check(tostring(err):find("serialize: fixed point", 1, true) ~= nil,
+    "wrong panic for an oversized integer bit count")
+  check(wsWide:error() == nil, "the trapped write latched " .. tostring(wsWide:error()))
+  check(wsWide:bitsProcessed() == 0, "the trapped write wrote " .. wsWide:bitsProcessed() .. " bits")
 end

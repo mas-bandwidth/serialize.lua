@@ -100,6 +100,19 @@ function TestU9PastEndTraps()
   check(ws:serializeBits({ value = 1 }, 3) and ws:serializeBytes({ value = "1234567" }, 7), "an exact fit")
 end
 
+-- U9, U10: int_relative checks the room for its whole tier before the first
+-- flag bit, so a write that does not fit leaves bitsProcessed unchanged.
+function TestU9IntRelativeRoomTrapsBeforeWrite()
+  local ws = serialize.WriteStream.new(8)
+  check(ws:serializeBits64({ value = 0 }, 62), "the prefix write")
+  local ok, err = pcall(function() return ws:serializeIntRelative(10, { value = 110 }) end)
+  check(not ok, "the int_relative write did not trap")
+  check(string.find(tostring(err), "past_end", 1, true) ~= nil,
+    "the trap does not name past_end: " .. tostring(err))
+  check(ws:error() == nil, "the int_relative write latched " .. tostring(ws:error()))
+  check(ws:bitsProcessed() == 62, "the int_relative write wrote " .. (ws:bitsProcessed() - 62) .. " bits")
+end
+
 -- U11: flush ends the write. A write after it raises, as the C reference
 -- asserts, and the flushed bytes stay as they were.
 function TestU9WriteAfterFlushTraps()
