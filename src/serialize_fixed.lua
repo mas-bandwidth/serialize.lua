@@ -64,8 +64,11 @@ local function validateParams(integerBits, fractionBits, min, max)
     or math_type(min) ~= "integer" or math_type(max) ~= "integer" then
     return PANIC_FIXED_PARAMS
   end
+  if integerBits < 1 or fractionBits < 0 or integerBits > 128 or fractionBits > 127 then
+    return PANIC_FIXED_PARAMS
+  end
   local total = integerBits + fractionBits
-  if integerBits < 1 or fractionBits < 0 or (total > 64 and total ~= 128) or min > max then
+  if (total > 64 and total ~= 128) or min > max then
     return PANIC_FIXED_PARAMS
   end
   local minRep, maxRep = fixedCapacity(integerBits, min < 0)
