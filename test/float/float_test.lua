@@ -256,6 +256,20 @@ function TestSerializeFloatIntegerSubtype()
     local msd = serialize.MeasureStream.new()
     check(msd:serializeDouble({ value = v }) == true and msd:bitsProcessed() == 64,
       "serializeDouble measures integer " .. tostring(v) .. " as 64 bits")
+    local function compressed(x)
+      local ws = serialize.WriteStream.new(8)
+      check(ws:serializeCompressedFloat({ value = x }, -50, 50, 1) == true,
+        "serializeCompressedFloat accepts " .. math.type(x) .. " " .. tostring(x) .. ", got " .. tostring(ws:error()))
+      ws:flush()
+      local mc = serialize.MeasureStream.new()
+      check(mc:serializeCompressedFloat({ value = x }, -50, 50, 1) == true,
+        "serializeCompressedFloat measures " .. math.type(x) .. " " .. tostring(x))
+      return ws:data(), mc:bitsProcessed()
+    end
+    local ib, ibits = compressed(v)
+    local fb, fbits = compressed(v + 0.0)
+    check(ib == fb and ibits == fbits,
+      "serializeCompressedFloat writes integer " .. tostring(v) .. " as its float value")
   end
   local d = 3 // 1
   check(math.type(d) == "integer", "3 // 1 is an integer subtype")
