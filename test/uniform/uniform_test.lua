@@ -356,9 +356,10 @@ function TestDocumentationReferences()
     local text = read(path)
     check(text:find("v2.1.4", 1, true) ~= nil, path .. " states the reference pin")
   end
-  for _, path in ipairs({ "ROADMAP.md", "docs/roadmap.sexp" }) do
+  for _, path in ipairs({ "DESIGN.md", "ROADMAP.md", "docs/roadmap.sexp" }) do
     local text = read(path)
-    check(text:find("2.1.3 rulings", 1, true) ~= nil, path .. " states the reference rulings it keeps")
+    check(text:find("2.1.1 rulings", 1, true) ~= nil, path .. " states the reference rulings it keeps")
+    check(text:find("2.1.3 rulings", 1, true) == nil, path .. " dates the rulings to 2.1.3")
   end
   local readme = read("README.md")
   check(readme:find("version 2.1.3", 1, true) ~= nil, "README.md states the port version")
