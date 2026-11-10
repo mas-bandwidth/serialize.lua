@@ -203,4 +203,29 @@ function TestSerializeFloat()
     check((got & 0x7F800000) == 0x7F800000 and (got & 0x7FFFFF) ~= 0,
       string.format("NaN %016X narrows to a NaN pattern, got %08X", bits, got))
   end
+
+  -- The compressed float wire path must round through the same fround the
+  -- edge table above pins. Count calls through the exported function while a
+  -- write and a read run.
+  do
+    local realFround = flt.fround
+    local calls = 0
+    flt.fround = function(v)
+      calls = calls + 1
+      return realFround(v)
+    end
+    local ok, err = pcall(function()
+      local ws = serialize.WriteStream.new(8)
+      check(ws:serializeCompressedFloat({ value = 1.5 }, 0.0, 10.0, 0.01),
+        "compressed float write failed, err=" .. tostring(ws:error()))
+      ws:flush()
+      local crs = serialize.ReadStream.new(ws:data())
+      local h = {}
+      check(crs:serializeCompressedFloat(h, 0.0, 10.0, 0.01),
+        "compressed float read failed, err=" .. tostring(crs:error()))
+    end)
+    flt.fround = realFround
+    if not ok then error(err, 0) end
+    check(calls > 0, "the compressed float wire path must use the float family's fround")
+  end
 end
