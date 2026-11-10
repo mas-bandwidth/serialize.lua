@@ -321,15 +321,16 @@ native 64-bit integer subtype (`math.maxinteger` is `9223372036854775807`,
 - **128-bit** values are two halves, `{ lo = <low 64>, hi = <high 64> }`, each
   an integer, two's complement across the pair. A read returns a fresh table;
   a write never mutates the holder's table.
-- **bool** is a Lua boolean. **float32** and **float64** are Lua floats
+- **bool** is a Lua boolean. **float32** and **float64** are Lua numbers
   (doubles); a float32 holds the double that is exactly its float32 value (e).
+  A number of either Lua subtype is accepted; an integer is converted to its
+  double value for the bit pattern.
 - **A value of the wrong Lua type is API misuse and raises**, never a silent
   coercion: a float where an integer belongs (`1.0` included: `math.type`
   tells them apart exactly), an integer outside its Go type's domain (a
-  `serializeUint8` of 300, a `serializeInt` bound outside int32), a non-string
-  where a string belongs, and an integer where a float belongs (a
-  `serializeFloat` or `serializeDouble` holder holds a float: `1.0`, never
-  `1`). serialize.go's type system refuses these at compile time; the strict
+  `serializeUint8` of 300, a `serializeInt` bound outside int32), and a
+  non-string where a string belongs. serialize.go's type system refuses these
+  at compile time; the strict
   writer refuses them at the call (the arm's `checkValue`, (h)). A value INSIDE its Go type
   but outside the call's `[min,max]` is write misuse too, caught by the arm
   rather than `checkValue`: it traps, naming `value_out_of_range` (U9, (g)).
