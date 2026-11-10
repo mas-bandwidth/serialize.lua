@@ -18,7 +18,7 @@ A write or a measure refuses nothing. Lua has no release build, so this port is 
     make fuzz            # differential fuzzing against serialize.go v2 (needs Go)
 
     -- the consumer replaces package.path and empties package.cpath (DESIGN.md (f))
-    package.path = "/path/to/serialize.lua/src/?.lua"
+    package.path = "<dir>/?.lua"
     package.cpath = ""
     local serialize = require("serialize")
 
