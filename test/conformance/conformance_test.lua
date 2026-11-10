@@ -493,7 +493,8 @@ local function matches(st, actual, token, kind)
     if want == nil then return false end
     local wlo, whi = parse128("0x" .. want)
     if whi ~= 0 then return false end
-    local got = (op == "double") and dbits(actual) or L.flt.float32Bits(actual)
+    local got = (op == "double") and dbits(actual)
+      or string.unpack("<I4", string.pack("<f", actual))
     return got == wlo
   end
   if kind == "bits" then return false end

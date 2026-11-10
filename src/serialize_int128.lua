@@ -125,6 +125,7 @@ function U.mul(a, b)
 end
 
 function U.lsh(v, n)
+  if n >= 128 then return { lo = 0, hi = 0 } end
   n = n % 128
   if n == 0 then return { lo = v.lo, hi = v.hi } end
   if n < 64 then
@@ -137,6 +138,7 @@ function U.lsh(v, n)
 end
 
 function U.rsh(v, n)
+  if n >= 128 then return { lo = 0, hi = 0 } end
   n = n % 128
   if n == 0 then return { lo = v.lo, hi = v.hi } end
   if n < 64 then
