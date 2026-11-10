@@ -130,6 +130,32 @@ function TestSerializeInt()
   end
 end
 
+-- A 128-bit read over a 12-byte (96-bit) buffer fails past_end before any bit
+-- is consumed, and leaves the holder untouched.
+function TestRead128ChecksRoomFirst()
+  local data = string.rep("\0", 12)
+  local cases = {
+    { "uint128", function(rs, h) return rs:serializeUint128(h) end },
+    { "int128", function(rs, h)
+      return rs:serializeInt128(h,
+        { lo = 0, hi = 0x8000000000000000 },
+        { lo = 0xffffffffffffffff, hi = 0x7fffffffffffffff })
+    end },
+    { "fixed128", function(rs, h)
+      return rs:serializeFixed(h, 64, 64, math.mininteger, math.maxinteger)
+    end },
+  }
+  for _, c in ipairs(cases) do
+    local rs = serialize.ReadStream.new(data)
+    local h = {}
+    check(c[2](rs, h) == false, c[1] .. ": the read did not fail")
+    check(rs:error() == serialize.Refusal.PastEnd, c[1] .. ": the reason was " .. tostring(rs:error()))
+    check(h.value == nil, c[1] .. ": the holder was written")
+    check(rs:bitsProcessed() == 0,
+      c[1] .. ": consumed " .. rs:bitsProcessed() .. " bits before failing")
+  end
+end
+
 function TestSerializeInt128SignedDivMod()
   local I = serialize.Int128
   local function eq(v, want, what)
