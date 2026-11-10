@@ -23,6 +23,9 @@ local stream = require("serialize_stream")
 
 local NON_FINITE_FLOAT = stream.Refusal.NonFiniteFloat
 
+-- The bit-length helper is shared through the module loader (serialize_int128).
+local bitlen = stream.family("int128", "serializeFloat").api.bitlen
+
 local M = {}
 
 local error, math, string = error, math, string
@@ -37,17 +40,6 @@ end
 
 local function doubleBitsAreFinite(bits)
   return (bits & DOUBLE_EXPONENT) ~= DOUBLE_EXPONENT
-end
-
--- number of bits of a non-negative integer (0 for 0); only used on the rare
--- subnormal paths, so a loop is fine
-local function bitlen(x)
-  local n = 0
-  while x > 0 do
-    n = n + 1
-    x = x >> 1
-  end
-  return n
 end
 
 -- The double's 64-bit pattern as an integer.

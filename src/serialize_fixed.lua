@@ -34,21 +34,9 @@ local math_type = math.type
 local int128mod = stream.family("int128", "serializeFixed")
 local U = int128mod.api.Uint128
 local I = int128mod.api.Int128
-
-local function bitlen(n)
-  local c = 0
-  while n > 0 do
-    n = n >> 1
-    c = c + 1
-  end
-  return c
-end
-
-local function len64(n)
-  if n == 0 then return 0 end
-  if n < 0 then return 64 end
-  return bitlen(n)
-end
+local len64 = int128mod.api.len64
+local writeGroups128 = int128mod.api.writeGroups128
+local readGroups128 = int128mod.api.readGroups128
 
 -- STANDARD.md, fixed: the whole-unit bounds a Q format can hold, clamped to the
 -- int64 domain the bounds live in (serialize.go fixedPointCapacity). Signedness
@@ -112,30 +100,6 @@ local function fixed128Params(fractionBits, min, max)
     numBits = len64(max - min) + fractionBits
   end
   return rawMin, rawRange, numBits
-end
-
--- The 128-bit group split (STANDARD.md, int128 and fixed): bits <= 32 is a
--- single group, otherwise full 32-bit groups from the bottom with the final group
--- carrying the remainder. Written through the 64-bit stream primitive.
-local function writeGroups128(s, offset, numBits)
-  if numBits <= 64 then
-    return s:_writeBits(offset.lo, numBits)
-  end
-  if not s:_writeBits(offset.lo, 64) then return false end
-  return s:_writeBits(offset.hi, numBits - 64)
-end
-
-local function readGroups128(s, numBits)
-  if numBits <= 64 then
-    local v = s:_readBits(numBits)
-    if v == nil then return nil end
-    return { lo = v, hi = 0 }
-  end
-  local lo = s:_readBits(64)
-  if lo == nil then return nil end
-  local hi = s:_readBits(numBits - 64)
-  if hi == nil then return nil end
-  return { lo = lo, hi = hi }
 end
 
 local fixed = {

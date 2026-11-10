@@ -162,16 +162,24 @@ local function isFinite(x)
   return x == x and x ~= math.huge and x ~= -math.huge
 end
 
--- numberError(x, what): roundNumber's rule as a message, or nil, for the
--- declaration checks, which never raise (serialize_stream.lua, M.method).
-local function numberError(x, what)
+-- roundedNumber(x, what): roundNumber's rule as a value and a message, or nil
+-- and a message, for the declaration checks, which never raise
+-- (serialize_stream.lua, M.method).
+local function roundedNumber(x, what)
   if type(x) ~= "number" then
-    return "serialize: " .. what .. " takes a number"
+    return nil, "serialize: " .. what .. " takes a number"
   end
-  if not isFinite(fround(x)) then
-    return "serialize: " .. what .. " must be a finite float32"
+  local r = fround(x)
+  if not isFinite(r) then
+    return nil, "serialize: " .. what .. " must be a finite float32"
   end
-  return nil
+  return r
+end
+
+-- numberError(x, what): roundedNumber's rule as a message, or nil.
+local function numberError(x, what)
+  local _, e = roundedNumber(x, what)
+  return e
 end
 
 -- STANDARD.md, compressed_float: values is clamped to [1, 4294967040], so
@@ -229,20 +237,29 @@ local function derive(min, max, res)
   return maxInt, bits.api.bitsRequired(0, maxInt), delta
 end
 
+-- The declaration a successful check rounded, for the arm that follows it on
+-- the same call.
+local declared = {}
+
 local compressed = {
   -- serialize.go CompressedFloatParams panics: min must be < max and resolution
   -- > 0, after each is rounded to float32 (DESIGN.md (e)).
-  -- A declaration check returns the rule's message, or nil (U16).
+  -- A declaration check returns the rule's message, or nil (U16). The rounded
+  -- parameters are kept for the arm, so each is rounded once per call.
   check = function(min, max, resolution)
-    local e = numberError(min, "min") or numberError(max, "max")
-      or numberError(resolution, "resolution")
+    local mn, e = roundedNumber(min, "min")
     if e ~= nil then return e end
-    if not (fround(min) < fround(max)) or not (fround(resolution) > 0) then
+    local mx, e2 = roundedNumber(max, "max")
+    if e2 ~= nil then return e2 end
+    local rs, e3 = roundedNumber(resolution, "resolution")
+    if e3 ~= nil then return e3 end
+    if not (mn < mx) or not (rs > 0) then
       return PANIC_FLOAT_PARAMS
     end
-    local delta = fround(fround(max) - fround(min))
+    local delta = fround(mx - mn)
     if not isFinite(delta) then return PANIC_DELTA end
-    if not isFinite(fround(delta / fround(resolution))) then return PANIC_VALUES end
+    if not isFinite(fround(delta / rs)) then return PANIC_VALUES end
+    declared.min, declared.max, declared.resolution = mn, mx, rs
     return nil
   end,
   checkValue = function(value)
@@ -251,10 +268,8 @@ local compressed = {
   -- STANDARD.md, "compressed_float", the writer: the value is rounded to
   -- float32, clamped to [min,max], quantized with the two roundings around
   -- 0.5, floored, then clamped to max_integer_value.
-  write = function(s, value, min, max, resolution)
-    local mn = roundNumber(min, "min")
-    local mx = roundNumber(max, "max")
-    local rs = roundNumber(resolution, "resolution")
+  write = function(s, value, _min, _max, _resolution)
+    local mn, mx, rs = declared.min, declared.max, declared.resolution
     local val = roundNumber(value, "value")
     checkWriteDeclaration(mn, mx, rs)
     local maxInt, bitsN, delta = derive(mn, mx, rs)
@@ -273,10 +288,8 @@ local compressed = {
   -- STANDARD.md, "compressed_float", the reader: divide by max_integer_value,
   -- multiply by delta, add min, every step rounded. Refuse an integer above
   -- max_integer_value.
-  read = function(s, min, max, resolution)
-    local mn = roundNumber(min, "min")
-    local mx = roundNumber(max, "max")
-    local rs = roundNumber(resolution, "resolution")
+  read = function(s, _min, _max, _resolution)
+    local mn, mx, rs = declared.min, declared.max, declared.resolution
     local maxInt, bitsN, delta = derive(mn, mx, rs)
     local iv = s:_readBits(bitsN)
     if iv == nil then return false end
@@ -285,10 +298,8 @@ local compressed = {
   end,
   -- serialize.go MeasureStream.SerializeCompressedFloat32: the wire width,
   -- after every check the write makes (IMPLEMENTING.md U6).
-  measure = function(s, _value, min, max, resolution)
-    local mn = roundNumber(min, "min")
-    local mx = roundNumber(max, "max")
-    local rs = roundNumber(resolution, "resolution")
+  measure = function(s, _value, _min, _max, _resolution)
+    local mn, mx, rs = declared.min, declared.max, declared.resolution
     checkWriteDeclaration(mn, mx, rs)
     local _, bitsN = derive(mn, mx, rs)
     return s:_measure(bitsN)

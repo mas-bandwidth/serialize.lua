@@ -429,6 +429,10 @@ local uint128 = {
 local M = {}
 M.methods = { serializeInt128 = int128, serializeUint128 = uint128 }
 M.api = {
+  bitlen = bitlen,
+  len64 = len64,
+  writeGroups128 = writeGroups128,
+  readGroups128 = readGroups128,
   bitsRequired128 = function(min, max) return bitsRequired128(min, max) end,
   Uint128 = {
     from64 = U.from64,

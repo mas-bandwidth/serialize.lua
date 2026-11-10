@@ -24,35 +24,12 @@ local INT32_MAX = 2147483647
 
 local math_type = math.type
 
--- bitlen(n): the number of significant bits of a non-negative integer.
-local function bitlen(n)
-  local c = 0
-  while n > 0 do
-    n = n >> 1
-    c = c + 1
-  end
-  return c
-end
-
--- len64(n): the bit length of the unsigned 64-bit pattern of n. A negative
--- integer has the top bit set, so its length is 64.
-local function len64(n)
-  if n == 0 then return 0 end
-  if n < 0 then return 64 end
-  return bitlen(n)
-end
-
--- STANDARD.md, int: bits_required(min, max) over the unsigned 32-bit domain.
-local function bitsRequired32(min, max)
-  if min == max then return 0 end
-  return bitlen(((max & 0xffffffff) - (min & 0xffffffff)) & 0xffffffff)
-end
-
--- STANDARD.md, int64: bits_required64 over the unsigned 64-bit domain.
-local function bitsRequired64(min, max)
-  if min == max then return 0 end
-  return len64(max - min)
-end
+-- The width helpers are shared through the module loader (serialize_bits.lua):
+-- STANDARD.md, int: bits_required(min, max) over the unsigned 32-bit domain,
+-- and int64: bits_required64 over the unsigned 64-bit domain.
+local bitsmod = stream.family("bits", "serializeInt")
+local bitsRequired32 = bitsmod.api.bitsRequired
+local bitsRequired64 = bitsmod.api.bitsRequired64
 
 -- A declaration check returns the rule's message, or nil (serialize_stream.lua,
 -- M.method: write and measure raise it, a read refuses value_out_of_range;
