@@ -129,6 +129,10 @@ local function writeGroups128(s, offset, numBits)
 end
 
 local function readGroups128(s, numBits)
+  if s._bits + numBits > s._numBits then
+    s:_fail(PAST_END)
+    return nil
+  end
   if numBits <= 64 then
     local v = s:_readBits(numBits)
     if v == nil then return nil end
