@@ -573,12 +573,15 @@ it. On each:
 - no read past the data's end: the bounds test precedes every load (d).
 
 The order of one serialize call (`serialize_stream.lua`, `M.method`). Write
-and measure: the holder is a table, else raise; the family loads, else raise
+and measure: the holder is a table, else raise (`serializeBytes` of zero count
+also takes no holder, and a holder with no value, IMPLEMENTING.md U7); the
+family loads, else raise
 "not implemented"; the arm's `check` runs (a bad declaration raises) and its
 `checkValue` (a value of the wrong type raises); the arm runs, and traps on a
 value its operation cannot carry (U9). There is no failed write or measure
 state to consult. Read: the family loads, else raise "not implemented";
-a failed stream returns `false`; a holder that is not a table or a bad
+a failed stream returns `false`; a holder that is not a table (the same zero
+count `serializeBytes` aside) or a bad
 declaration refuses `value_out_of_range`; the arm runs; the stream settles
 the result (a read assigns the holder only on success). Because the family
 loads before the latch check, a method whose

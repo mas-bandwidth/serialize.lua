@@ -234,7 +234,8 @@ end
 --
 -- Write and measure, per call (DESIGN.md (g); IMPLEMENTING.md U6, U9: every
 -- misuse traps, and there is no failed state to check):
---   1. the holder is a table, else raise;
+--   1. the holder is a table, else raise (a nil holder is an empty one where
+--      the arm's noHolder accepts the declaration, U7);
 --   2. the family is loaded (lazily), else raise not implemented;
 --   3. a bad declaration raises its message; the arm's checkValue runs over
 --      the same arguments with holder.value in the holder's place (the type
@@ -248,7 +249,8 @@ end
 --   2. a failed stream returns false: nothing is consumed and the holder is
 --      untouched (STANDARD.md, Reader Obligations, "Failure is terminal"), and
 --      the first reason is kept;
---   3. caller misuse (a holder that is not a table, a bad declaration) refuses
+--   3. caller misuse (a holder that is not a table, noHolder aside, a bad
+--      declaration) refuses
 --      as value_out_of_range before any bit moves (U7, U16), never a raise;
 --   4. the arm receives the other arguments and returns ok, value, and the
 --      holder is assigned only when ok (STANDARD.md, Reader Obligations, "A
@@ -261,9 +263,17 @@ function M.method(fam, name, holderIndex)
     end
     return m
   end
+  -- An arm's noHolder(...) is true when its declaration needs no destination
+  -- (IMPLEMENTING.md U7: bytes of zero count); a nil holder then stands for
+  -- an empty one.
+  local function noHolder(...)
+    local a = get()
+    return a.noHolder ~= nil and a.noHolder(...)
+  end
   if holderIndex == 1 then
     return {
       write = function(self, holder, ...)
+        if holder == nil and noHolder(...) then holder = {} end
         if type(holder) ~= "table" then holderMisuse(name) end
         local a = get()
         if a.check then
@@ -275,6 +285,7 @@ function M.method(fam, name, holderIndex)
       end,
       read = function(self, holder, ...)
         local a = get()
+        if holder == nil and noHolder(...) then holder = {} end
         if self._err ~= nil then return false end
         if type(holder) ~= "table" then return fail(self, VALUE_OUT_OF_RANGE) end
         if a.check and a.check(...) ~= nil then return fail(self, VALUE_OUT_OF_RANGE) end
@@ -286,6 +297,7 @@ function M.method(fam, name, holderIndex)
         return false
       end,
       measure = function(self, holder, ...)
+        if holder == nil and noHolder(...) then holder = {} end
         if type(holder) ~= "table" then holderMisuse(name) end
         local a = get()
         if a.check then

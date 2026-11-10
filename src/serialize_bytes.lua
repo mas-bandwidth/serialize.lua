@@ -114,9 +114,13 @@ local methods = {}
 
 -- serializeBytes: STANDARD.md "bytes": aligns first, then writes `count` raw
 -- bytes. The count is not transmitted; both sides know it.
+-- IMPLEMENTING.md U7: a zero count needs no destination on any stream, so no
+-- holder, or a holder with no value, is the empty block.
 methods.serializeBytes = {
   check = checkBytesCount,
+  noHolder = function(numBytes) return numBytes == 0 end,
   checkValue = function(value, numBytes)
+    if value == nil and numBytes == 0 then return end
     if type(value) ~= "string" then
       error("serialize: serializeBytes takes a string value", 3)
     end
@@ -125,6 +129,7 @@ methods.serializeBytes = {
     end
   end,
   write = function(s, value)
+    value = value or ""
     if not room(s, 0, #value) then return s:_fail(PAST_END) end
     if not s:serializeAlign() then return false end
     return s:_writeBytes(value)
