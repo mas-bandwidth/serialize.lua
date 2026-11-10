@@ -18,7 +18,7 @@ and U15, the 2.1.4 statements of U7, U11 and U16, and the `reject` step), by
 `tools/revendor.sh v2.1.4`, and CI
 diffs them against the tag on
 every run. Where STANDARD.md is silent,
-[serialize.go](https://github.com/mas-bandwidth/serialize.go) `v2.0.0` (module
+[serialize.go](https://github.com/mas-bandwidth/serialize.go) `v2.1.1` (module
 `github.com/mas-bandwidth/serialize.go/v2`) is the reference for behaviour
 (IMPLEMENTING.md, "Sources"), and the fuzz oracle;
 [serialize.js](https://github.com/mas-bandwidth/serialize.js) (commit
