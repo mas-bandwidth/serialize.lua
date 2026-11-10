@@ -28,8 +28,15 @@ local math_type = math.type
 -- STANDARD.md, int: bits_required(min, max) over the unsigned 32-bit domain,
 -- and int64: bits_required64 over the unsigned 64-bit domain.
 local bitsmod = stream.family("bits", "serializeInt")
-local bitsRequired32 = bitsmod.api.bitsRequired
+local bitsRequired = bitsmod.api.bitsRequired
 local bitsRequired64 = bitsmod.api.bitsRequired64
+
+-- The int32 declaration's bounds may be negative; bits_required is defined over
+-- the unsigned 32-bit span between them.
+local function bitsRequired32(min, max)
+  if min == max then return 0 end
+  return bitsRequired(0, (max - min) & 0xffffffff)
+end
 
 -- A declaration check returns the rule's message, or nil (serialize_stream.lua,
 -- M.method: write and measure raise it, a read refuses value_out_of_range;
