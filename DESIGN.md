@@ -90,7 +90,7 @@ exists, so a row added here is a row the skeleton must carry.
 | `serialize.Uint128.add(a, b)` | serialize_int128.lua (int) | `Uint128.Add` |
 | `serialize.Uint128.sub(a, b)` | serialize_int128.lua (int) | `Uint128.Sub` |
 | `serialize.Uint128.mul(a, b)` | serialize_int128.lua (int) | `Uint128.Mul` |
-| `serialize.Uint128.divMod(a, b)` | serialize_int128.lua (int) | `Uint128.DivMod`: returns `quotient, remainder` |
+| `serialize.Uint128.divMod(a, b)` | serialize_int128.lua (int) | `Uint128.DivMod`: returns `quotient, remainder`; a zero divisor raises |
 | `serialize.Uint128.div(a, b)` | serialize_int128.lua (int) | `Uint128.Div` |
 | `serialize.Uint128.mod(a, b)` | serialize_int128.lua (int) | `Uint128.Mod` |
 | `serialize.Uint128.neg(v)` | serialize_int128.lua (int) | `Uint128.Neg` |
@@ -108,7 +108,7 @@ exists, so a row added here is a row the skeleton must carry.
 | `serialize.Int128.add(a, b)` | serialize_int128.lua (int) | `Int128.Add` |
 | `serialize.Int128.sub(a, b)` | serialize_int128.lua (int) | `Int128.Sub` |
 | `serialize.Int128.mul(a, b)` | serialize_int128.lua (int) | `Int128.Mul` |
-| `serialize.Int128.divMod(a, b)` | serialize_int128.lua (int) | `Int128.DivMod`: truncating, returns `quotient, remainder` |
+| `serialize.Int128.divMod(a, b)` | serialize_int128.lua (int) | `Int128.DivMod`: truncating, returns `quotient, remainder`; a zero divisor raises |
 | `serialize.Int128.div(a, b)` | serialize_int128.lua (int) | `Int128.Div` |
 | `serialize.Int128.mod(a, b)` | serialize_int128.lua (int) | `Int128.Mod` |
 | `serialize.Int128.neg(v)` | serialize_int128.lua (int) | `Int128.Neg` |

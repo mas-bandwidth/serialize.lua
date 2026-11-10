@@ -239,8 +239,8 @@ function TestSerializeInt128SignedDivMod()
     eq(I.mod(x, y), wantR, "Int128 mod " .. c[1] .. "/" .. c[2])
   end
   -- serialize.go TestInt128 divCases, with two-lane expected pairs:
-  -- the 7/3 sign quadrants, -1/2, the MinInt128 boundaries and
-  -- MaxInt128 divided by zero
+  -- the 7/3 sign quadrants, -1/2 and the MinInt128 boundaries (its
+  -- MaxInt128 divided by zero raises here: TestSerializeInt128DivideByZeroRaises)
   local divCases = {
     { { lo = 7, hi = 0 }, { lo = 3, hi = 0 }, { lo = 2, hi = 0 }, { lo = 1, hi = 0 } },
     { { lo = -7, hi = -1 }, { lo = 3, hi = 0 }, { lo = -2, hi = -1 }, { lo = -1, hi = -1 } },
@@ -253,8 +253,6 @@ function TestSerializeInt128SignedDivMod()
       { lo = 0, hi = 0x8000000000000000 }, { lo = 0, hi = 0 } },
     { { lo = 0, hi = 0x8000000000000000 }, { lo = -1, hi = -1 },
       { lo = 0, hi = 0x8000000000000000 }, { lo = 0, hi = 0 } },
-    { { lo = 0xffffffffffffffff, hi = 0x7fffffffffffffff }, { lo = 0, hi = 0 },
-      { lo = 0, hi = 0 }, { lo = 0, hi = 0 } },
   }
   for i, c in ipairs(divCases) do
     local x, y, wantQ, wantR = c[1], c[2], c[3], c[4]
@@ -277,6 +275,30 @@ function TestSerializeInt128SignedDivMod()
   q, r = I.divMod(negWide, I.from64(-3))
   eq(q, I.from64(6148914691236517205), "Int128 divMod -2^64/-3 quotient")
   eq(r, I.from64(-1), "Int128 divMod -2^64/-3 remainder")
+end
+
+-- Division by zero is undefined in the reference; here it raises, as every
+-- other misuse of the 128-bit helpers does, and never returns a value.
+function TestSerializeInt128DivideByZeroRaises()
+  local U = serialize.Uint128
+  local I = serialize.Int128
+  local zero = { lo = 0, hi = 0 }
+  local dividends = {
+    { lo = 7, hi = 0 }, { lo = -7, hi = -1 }, zero,
+    { lo = 0xffffffffffffffff, hi = 0x7fffffffffffffff }, { lo = -1, hi = -1 },
+  }
+  local ops = {
+    { "Uint128.divMod", U.divMod }, { "Uint128.div", U.div }, { "Uint128.mod", U.mod },
+    { "Int128.divMod", I.divMod }, { "Int128.div", I.div }, { "Int128.mod", I.mod },
+  }
+  for _, op in ipairs(ops) do
+    for _, x in ipairs(dividends) do
+      local ok, err = pcall(op[2], x, zero)
+      check(not ok, op[1] .. " by zero returned a value")
+      check(tostring(err) == "serialize: division by zero",
+        op[1] .. " by zero raised \"" .. tostring(err) .. "\"")
+    end
+  end
 end
 
 -- The two-lane 128-bit helpers (serialize.go int128.go). Every exported
@@ -384,7 +406,6 @@ function TestSerializeInt128PairOps()
       { pair(1 << 63, 0), pair(1, 0), U.from64(1 << 63), pair(0, 0) },
       { allOnes, U.from64(3), pair(0x5555555555555555, 0x5555555555555555), pair(0, 0) },
       { U.from64(7), pair(1, 0), pair(0, 0), U.from64(7) },
-      { allOnes, pair(0, 0), pair(0, 0), pair(0, 0) },
     }
     for idx, c in ipairs(udiv) do
       local q, r = U.divMod(c[1], c[2])
@@ -395,13 +416,11 @@ function TestSerializeInt128PairOps()
     end
 
     local intMin = pair(0x8000000000000000, 0)
-    local intMax = pair(0x7fffffffffffffff, -1)
     local minusOne, zero = I.from64(-1), pair(0, 0)
     local idiv = {
       { intMin, I.from64(2), pair(0xc000000000000000, 0), zero },
       { intMin, I.from64(1), intMin, zero },
       { intMin, minusOne, intMin, zero },
-      { intMax, zero, zero, zero },
     }
     for idx, c in ipairs(idiv) do
       local q, r = I.divMod(c[1], c[2])

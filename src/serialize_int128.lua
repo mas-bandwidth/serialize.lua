@@ -179,7 +179,7 @@ function U.neg(v)
 end
 
 function U.divMod(x, y)
-  if U.isZero(y) then return { lo = 0, hi = 0 }, { lo = 0, hi = 0 } end
+  if U.isZero(y) then error("serialize: division by zero", 0) end
   local quotient = { lo = 0, hi = 0 }
   local remainder = { lo = 0, hi = 0 }
   local one = { lo = 1, hi = 0 }
