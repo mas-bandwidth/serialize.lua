@@ -256,7 +256,11 @@ function I.mul(a, b)
 end
 
 function I.divMod(x, y)
-  local q, r = U.divMod(I.uint128(x), I.uint128(y))
+  local ux = I.uint128(x)
+  if I.isNegative(x) then ux = U.neg(ux) end
+  local uy = I.uint128(y)
+  if I.isNegative(y) then uy = U.neg(uy) end
+  local q, r = U.divMod(ux, uy)
   if I.isNegative(x) ~= I.isNegative(y) then
     q = U.neg(q)
   end
@@ -345,6 +349,10 @@ local function writeGroups128(s, offset, numBits)
 end
 
 local function readGroups128(s, numBits)
+  if s._bits + numBits > s._numBits then
+    s:_fail(PAST_END)
+    return nil
+  end
   if numBits <= 64 then
     local v = s:_readBits(numBits)
     if v == nil then return nil end
@@ -422,6 +430,9 @@ local uint128 = {
     return s:_writeBits(value.hi, 64)
   end,
   read = function(s)
+    if s._bits + 128 > s._numBits then
+      return s:_fail(PAST_END)
+    end
     local lo = s:_readBits(64)
     if lo == nil then return false end
     local hi = s:_readBits(64)

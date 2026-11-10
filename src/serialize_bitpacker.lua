@@ -31,6 +31,7 @@ local PANIC_READ_OVERFLOW = "serialize: bit reader would read past the end of th
 local PANIC_NOT_ALIGNED = "serialize: byte array serialization requires byte alignment"
 local PANIC_BUFFER_BYTES = "serialize: bit writer buffer size must be a multiple of 8 bytes"
 local PANIC_WRITE_AFTER_FLUSH = "serialize: bit writer write after flush"
+local PANIC_DATA_BEFORE_FLUSH = "serialize: bit writer data before flush"
 
 -- Flush ends the write: a flush that stored a partial word leaves the scratch
 -- out of step with the bit count, and the C reference asserts on the next write.
@@ -176,6 +177,9 @@ function BitWriter:bytesWritten()
 end
 
 function BitWriter:data()
+  if self._scratchBits ~= 0 then
+    error(PANIC_DATA_BEFORE_FLUSH, 2)
+  end
   local joined = table.concat(self._pieces)
   local n = self:bytesWritten()
   if #joined < n then

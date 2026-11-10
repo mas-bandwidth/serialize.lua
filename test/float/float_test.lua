@@ -5,10 +5,9 @@
 -- records read and (when canonical) write the exact bytes; non-finite patterns
 -- are refused as non_finite_float with the holder untouched. A non-finite value
 -- is write misuse, tested after the float32 narrowing: the writer and the
--- measure trap on it (IMPLEMENTING.md U9, U6). fround
--- pins Go's float32() conversion on a table of edges computed by Go at
--- `.ref/gen_fround_edges` (JOB.md). No real time, no sockets, no network: io
--- only reads the conformance files.
+-- measure trap on it (IMPLEMENTING.md U9, U6). fround pins Go's float32()
+-- conversion on a table of edges checked against Go's float32() bit for bit.
+-- No real time, no sockets, no network: io only reads the conformance files.
 
 local serialize = require("serialize")
 local flt = require("serialize_float")
@@ -53,6 +52,13 @@ local function writeAccepted(method, value, what)
   check(ms[method](ms, { value = value }) == true, what .. ": the measure must accept")
 end
 
+local function wireBytes(method, value, what)
+  local ws = serialize.WriteStream.new(8)
+  check(ws[method](ws, { value = value }) == true, what .. ": the write must accept, got " .. tostring(ws:error()))
+  ws:flush()
+  return ws:data()
+end
+
 function TestSerializeFloat()
   local counts = { ["conformance/float.txt"] = 24, ["conformance/double.txt"] = 27 }
   for path, n in pairs(counts) do
@@ -95,7 +101,7 @@ function TestSerializeFloat()
     "the echo keeps the first reason")
 
   -- -------------------------------------------------------------------------
-  -- fround: Go's float32() on a table of edges computed at .ref (JOB.md).
+  -- fround: Go's float32() on a table of edges, checked bit for bit.
   -- Each entry is { double bits, expected float32 bits }.
   -- -------------------------------------------------------------------------
   local FROUND = {
@@ -179,7 +185,7 @@ function TestSerializeFloat()
     { 0x76973EA0E7790949, 0x7F800000 },
     { 0x0BF1496E2970124B, 0x00000000 },
     { 0x66B609B2E88D83A5, 0x7F800000 },
-    -- subnormal rounding regressions (JOB.md attempt 2): single rounding of
+    -- subnormal rounding regressions: single rounding of
     -- the exact double onto the 2^-149 grid, not double-rounding through a
     -- pre-rounded 24-bit significand; each was computed by Go's float32().
     { 0x38079409D4CD951F, 0x005E5027 },
@@ -204,4 +210,69 @@ function TestSerializeFloat()
     check((got & 0x7F800000) == 0x7F800000 and (got & 0x7FFFFF) ~= 0,
       string.format("NaN %016X narrows to a NaN pattern, got %08X", bits, got))
   end
+
+  -- The compressed float wire path must round through the same fround the
+  -- edge table above pins. Count calls through the exported function while a
+  -- write and a read run.
+  do
+    local realFround = flt.fround
+    local calls = 0
+    flt.fround = function(v)
+      calls = calls + 1
+      return realFround(v)
+    end
+    local ok, err = pcall(function()
+      local ws = serialize.WriteStream.new(8)
+      check(ws:serializeCompressedFloat({ value = 1.5 }, 0.0, 10.0, 0.01),
+        "compressed float write failed, err=" .. tostring(ws:error()))
+      ws:flush()
+      local crs = serialize.ReadStream.new(ws:data())
+      local h = {}
+      check(crs:serializeCompressedFloat(h, 0.0, 10.0, 0.01),
+        "compressed float read failed, err=" .. tostring(crs:error()))
+    end)
+    flt.fround = realFround
+    if not ok then error(err, 0) end
+    check(calls > 0, "the compressed float wire path must use the float family's fround")
+  end
+end
+
+-- An integer-subtype Lua number is still a Lua number: serializeFloat and
+-- serializeDouble accept it and write the same bits as its float value.
+function TestSerializeFloatIntegerSubtype()
+  check(math.type(1) == "integer" and math.type(1.0) == "float",
+    "the witness uses both Lua number subtypes")
+  for _, v in ipairs({ 0, 1, -1, 3, 42 }) do
+    check(math.type(v) == "integer", tostring(v) .. " is an integer subtype")
+    check(wireBytes("serializeFloat", v, "float " .. tostring(v))
+      == wireBytes("serializeFloat", v + 0.0, "float " .. tostring(v) .. ".0"),
+      "serializeFloat writes integer " .. tostring(v) .. " as its float value")
+    check(wireBytes("serializeDouble", v, "double " .. tostring(v))
+      == wireBytes("serializeDouble", v + 0.0, "double " .. tostring(v) .. ".0"),
+      "serializeDouble writes integer " .. tostring(v) .. " as its float value")
+    local ms = serialize.MeasureStream.new()
+    check(ms:serializeFloat({ value = v }) == true and ms:bitsProcessed() == 32,
+      "serializeFloat measures integer " .. tostring(v) .. " as 32 bits")
+    local msd = serialize.MeasureStream.new()
+    check(msd:serializeDouble({ value = v }) == true and msd:bitsProcessed() == 64,
+      "serializeDouble measures integer " .. tostring(v) .. " as 64 bits")
+    local function compressed(x)
+      local ws = serialize.WriteStream.new(8)
+      check(ws:serializeCompressedFloat({ value = x }, -50, 50, 1) == true,
+        "serializeCompressedFloat accepts " .. math.type(x) .. " " .. tostring(x) .. ", got " .. tostring(ws:error()))
+      ws:flush()
+      local mc = serialize.MeasureStream.new()
+      check(mc:serializeCompressedFloat({ value = x }, -50, 50, 1) == true,
+        "serializeCompressedFloat measures " .. math.type(x) .. " " .. tostring(x))
+      return ws:data(), mc:bitsProcessed()
+    end
+    local ib, ibits = compressed(v)
+    local fb, fbits = compressed(v + 0.0)
+    check(ib == fb and ibits == fbits,
+      "serializeCompressedFloat writes integer " .. tostring(v) .. " as its float value")
+  end
+  local d = 3 // 1
+  check(math.type(d) == "integer", "3 // 1 is an integer subtype")
+  check(wireBytes("serializeDouble", d, "double 3 // 1") == wireBytes("serializeDouble", 3.0, "double 3.0"),
+    "serializeDouble writes 3 // 1 as 3.0")
 end

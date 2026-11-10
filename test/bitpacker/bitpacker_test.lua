@@ -233,3 +233,21 @@ function TestBitWriterWriteAfterFlushRaises()
   b:flushBits()
   check(b:data() == string.rep("\0", 8) .. "\xcdx", "a flush on a word boundary")
 end
+
+-- data() returns the flushed bytes. A pending scratch word is not among them,
+-- so data() raises until that word is flushed.
+function TestBitWriterDataBeforeFlushRaises()
+  local w = serialize.BitWriter.new(16)
+  w:writeBits(0xDEADBEEF, 32)
+  raises(function() w:data() end, "serialize: bit writer data before flush")
+  check(w:bitsWritten() == 32, "the raised data call changed the writer")
+  w:flushBits()
+  check(w:data() == string.char(0xEF, 0xBE, 0xAD, 0xDE), "the flushed bytes")
+
+  -- a full word is already stored, so data() returns it without a flush
+  local full = serialize.BitWriter.new(8)
+  full:writeBits(0xDEADBEEF, 32)
+  full:writeBits(0xDEADBEEF, 32)
+  check(full:data() == string.char(0xEF, 0xBE, 0xAD, 0xDE, 0xEF, 0xBE, 0xAD, 0xDE),
+    "data with no pending scratch")
+end
