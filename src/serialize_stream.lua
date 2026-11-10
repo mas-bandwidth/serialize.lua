@@ -491,7 +491,6 @@ end
 function WriteStream:_writeBytes(s)
   if self._bits % 8 ~= 0 then error(PANIC_NOT_ALIGNED, 2) end
   local n = #s
-  if n == 0 then return true end
   -- compared in bytes, as serialize.go does, so a huge count cannot wrap the test
   if n > (self._numBits - self._bits) // 8 then trapMisuse(self, PAST_END) end
   writer(self):writeBytes(s)
