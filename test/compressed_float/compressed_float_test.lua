@@ -164,3 +164,26 @@ function TestSerializeCompressedFloat()
     check(not ok, "writing NaN must raise, got " .. tostring(err))
   end
 end
+
+-- The subnormal widening path takes its bit length from the shared helper
+-- exposed by the int128 family. A wrapper counts each call, and a declaration
+-- that rounds a subnormal float32 must pass through it.
+function TestCompressedFloatSharesBitLengthHelper()
+  local stream = require("serialize_stream")
+  local int128 = stream.family("int128", "compressed float")
+  local shared = int128.api.bitlen
+  local calls = 0
+  int128.api.bitlen = function(n)
+    calls = calls + 1
+    return shared(n)
+  end
+  local ok, err = pcall(function()
+    local tiny = 1.0 / 2.0 ^ 149
+    local ms = serialize.MeasureStream.new()
+    check(ms:serializeCompressedFloat({ value = tiny }, tiny, 1.0, 1.0),
+      "measure a subnormal declaration")
+  end)
+  int128.api.bitlen = shared
+  check(ok, err)
+  check(calls > 0, "the subnormal widening uses the shared bit-length helper (calls " .. calls .. ")")
+end

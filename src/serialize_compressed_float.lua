@@ -31,6 +31,9 @@
 local stream = require("serialize_stream")
 local bits = require("serialize_bits")
 
+-- The bit-length helper is shared through the module loader (serialize_int128).
+local int128mod = stream.family("int128", "serializeCompressedFloat")
+
 local VALUE_OUT_OF_RANGE = stream.Refusal.ValueOutOfRange
 local NON_FINITE_FLOAT = stream.Refusal.NonFiniteFloat
 local PANIC_FLOAT_PARAMS = "serialize: compressed float requires min < max and resolution > 0"
@@ -58,10 +61,7 @@ local function f32ToDouble(bits32)
     if m32 == 0 then
       e64, m64 = 0, 0
     else
-      local bitpos = 0
-      local t = m32
-      while t > 0 do t = t >> 1; bitpos = bitpos + 1 end
-      bitpos = bitpos - 1
+      local bitpos = int128mod.api.bitlen(m32) - 1
       e64 = 874 + bitpos
       m64 = (m32 << (52 - bitpos)) & 0xFFFFFFFFFFFFF
     end
