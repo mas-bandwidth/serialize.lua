@@ -219,10 +219,10 @@ function TestSerializeFloat()
       check(ws:serializeCompressedFloat({ value = 1.5 }, 0.0, 10.0, 0.01),
         "compressed float write failed, err=" .. tostring(ws:error()))
       ws:flush()
-      local rs = serialize.ReadStream.new(ws:data())
+      local crs = serialize.ReadStream.new(ws:data())
       local h = {}
-      check(rs:serializeCompressedFloat(h, 0.0, 10.0, 0.01),
-        "compressed float read failed, err=" .. tostring(rs:error()))
+      check(crs:serializeCompressedFloat(h, 0.0, 10.0, 0.01),
+        "compressed float read failed, err=" .. tostring(crs:error()))
     end)
     flt.fround = realFround
     if not ok then error(err, 0) end
