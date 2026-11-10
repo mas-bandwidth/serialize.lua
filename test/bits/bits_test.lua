@@ -145,6 +145,10 @@ function TestSerializeBits()
   check(serialize.bitsRequired64(0, 255) == 8, "bitsRequired64(0,255)")
   check(serialize.bitsRequired64(-1, 0) == 1, "bitsRequired64 unsigned diff")
   check(serialize.bitsRequired64(0, -1) == 64, "bitsRequired64(0,uint64 max)")
+  raises(function() serialize.bitsRequired(0, 4294967296) end, "bitsRequired64")
+  raises(function() serialize.bitsRequired(0, 4294967301) end, "in [0,4294967295]")
+  raises(function() serialize.bitsRequired(5, 3) end, "min must not be greater than max")
+  raises(function() serialize.bitsRequired(0, 7.5) end, "must be integers")
   local zz = function(n) return serialize.unsignedToSigned(serialize.signedToUnsigned(n)) end
   local conv = { 0, -1, 1, -2, 2, 2147483647, -2147483648 }
   for _, n in ipairs(conv) do
