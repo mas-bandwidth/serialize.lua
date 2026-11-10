@@ -69,7 +69,6 @@ function BitWriter:reset(capacity)
   self._bitsWritten = 0
   self._scratch = 0
   self._scratchBits = 0
-  self._wordIndex = 0
   self._pieces = {}
 end
 
@@ -93,7 +92,6 @@ function BitWriter:writeBits(value, bits)
   local newScratchBits = s + bits
   if newScratchBits >= 64 then
     self._pieces[#self._pieces + 1] = string.pack("<i8", self._scratch)
-    self._wordIndex = self._wordIndex + 1
     -- the bits that spilled past 64 begin the next scratch word
     self._scratch = value >> (64 - s)
     self._scratchBits = newScratchBits - 64
@@ -139,7 +137,6 @@ function BitWriter:writeBytes(s)
   if numWords > 0 then
     self._pieces[#self._pieces + 1] = string.sub(s, headBytes + 1, headBytes + numWords * 8)
     self._bitsWritten = self._bitsWritten + numWords * 64
-    self._wordIndex = self._wordIndex + numWords
   end
 
   for i = headBytes + numWords * 8 + 1, n do
@@ -153,7 +150,6 @@ function BitWriter:flushBits()
     self._pieces[#self._pieces + 1] = string.pack("<i8", self._scratch)
     self._scratch = 0
     self._scratchBits = 0
-    self._wordIndex = self._wordIndex + 1
   end
 end
 

@@ -182,11 +182,15 @@ M.floatBitsAreFinite = floatBitsAreFinite
 M.doubleBitsAreFinite = doubleBitsAreFinite
 
 -- DESIGN.md (c): a float holder value is any Lua number; an integer is
--- converted to its double value for the bit pattern. A non-number is API
--- misuse and raises.
+-- converted to its double value for the bit pattern. A non-number, and an
+-- integer with no exact double value (IMPLEMENTING.md U3), is API misuse and
+-- raises.
 local function checkFloat(value)
   if type(value) ~= "number" then
     error("serialize: a float holder value is a Lua number", 3)
+  end
+  if math.type(value) == "integer" and math.tointeger(value + 0.0) ~= value then
+    error("serialize: a float holder integer must convert exactly to a double", 3)
   end
 end
 

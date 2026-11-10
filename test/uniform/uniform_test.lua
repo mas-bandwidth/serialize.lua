@@ -1,5 +1,5 @@
 -- test/uniform: the uniform behaviour rules U1 to U16 of IMPLEMENTING.md
--- (vendored from serialize v2.1.3) that this port proves with its own tests.
+-- (vendored from serialize v2.1.4) that this port proves with its own tests.
 -- Run by `make test T=uniform` from the repository root. Each test names its
 -- rule. Unit tests: no real time, no sockets, no network: io only reads the
 -- repository's documents.
@@ -111,6 +111,7 @@ function TestU7ReadMisuseRefusesNeverRaises()
   refusedRead("bits64 65", data, function(rs, h) return rs:serializeBits64(h, 65) end)
   refusedRead("bits 8.0", data, function(rs, h) return rs:serializeBits(h, 8.0) end)
   refusedRead("negative byte count", data, function(rs, h) return rs:serializeBytes(h, -1) end)
+  refusedRead("bytes with no holder", data, function(rs) return rs:serializeBytes(nil, 4) end)
   refusedRead("string buffer size 0", data, function(rs, h) return rs:serializeString(h, 0) end)
   refusedRead("string buffer size -5", data, function(rs, h) return rs:serializeString(h, -5) end)
   refusedRead("int min > max", data, function(rs, h) return rs:serializeInt(h, 5, 1) end)
@@ -157,6 +158,47 @@ function TestU7ReadMisuseRefusesNeverRaises()
     "serialize: serializeInt bounds must be in int32")
   raises(function() serialize.WriteStream.new(8):serializeString({ value = "" }, 0) end,
     "serialize: string buffer size must be in [1,1<<31)")
+end
+
+-- U7: bytes of zero count with no destination (no holder, or a holder with no
+-- value) is not misuse on any stream: it performs the align and copies
+-- nothing. A positive count with no destination stays misuse: it raises on
+-- write and measure, and refuses on read.
+function TestU7ZeroCountBytesWithNoDestination()
+  local function noHolder() return nil end
+  local function emptyHolder() return {} end
+  for _, c in ipairs({ { "no holder", noHolder }, { "a holder with no value", emptyHolder } }) do
+    local what = c[1]
+    local ws = serialize.WriteStream.new(8)
+    check(ws:serializeBits({ value = 5 }, 3), what .. ": the prefix write")
+    local ok, r = pcall(function() return ws:serializeBytes(c[2](), 0) end)
+    check(ok and r == true, what .. ": the write was not accepted: " .. tostring(r))
+    check(ws:bitsProcessed() == 8, what .. ": the write did not align, at " .. ws:bitsProcessed() .. " bits")
+    ws:flush()
+    check(ws:data() == "\5", what .. ": the write produced the wrong bytes")
+
+    local ms = serialize.MeasureStream.new()
+    check(ms:serializeBits({ value = 5 }, 3), what .. ": the prefix measure")
+    ok, r = pcall(function() return ms:serializeBytes(c[2](), 0) end)
+    check(ok and r == true, what .. ": the measure was not accepted: " .. tostring(r))
+    check(ms:bitsProcessed() > 3, what .. ": the measure did not count the align")
+
+    local rs = serialize.ReadStream.new("\5")
+    check(rs:serializeBits({}, 3), what .. ": the prefix read")
+    local h = c[2]()
+    ok, r = pcall(function() return rs:serializeBytes(h, 0) end)
+    check(ok and r == true, what .. ": the read was not accepted: " .. tostring(r) .. " " .. tostring(rs:error()))
+    check(rs:ok() and rs:bitsProcessed() == 8, what .. ": the read did not align")
+    check(h == nil or h.value == "", what .. ": the read stored the wrong block")
+  end
+  raises(function() serialize.WriteStream.new(8):serializeBytes(nil, 4) end,
+    "serialize: serializeBytes takes a holder table")
+  raises(function() serialize.MeasureStream.new():serializeBytes(nil, 4) end,
+    "serialize: serializeBytes takes a holder table")
+  raises(function() serialize.WriteStream.new(8):serializeBytes({}, 4) end,
+    "serialize: serializeBytes takes a string value")
+  raises(function() serialize.MeasureStream.new():serializeBytes({}, 4) end,
+    "serialize: serializeBytes takes a string value")
 end
 
 -- U8: a value that does not fit its bit width is caught, never masked.
@@ -310,11 +352,14 @@ function TestDocumentationReferences()
     f:close()
     return text
   end
-  for _, path in ipairs({
-    "README.md", "DESIGN.md", "ROADMAP.md", "docs/roadmap.sexp", ".github/workflows/ci.yml",
-  }) do
+  for _, path in ipairs({ "README.md", "DESIGN.md", ".github/workflows/ci.yml" }) do
     local text = read(path)
-    check(text:find("2.1.3", 1, true) ~= nil, path .. " states the reference pin")
+    check(text:find("v2.1.4", 1, true) ~= nil, path .. " states the reference pin")
+  end
+  for _, path in ipairs({ "DESIGN.md", "ROADMAP.md", "docs/roadmap.sexp" }) do
+    local text = read(path)
+    check(text:find("2.1.1 rulings", 1, true) ~= nil, path .. " states the reference rulings it keeps")
+    check(text:find("2.1.3 rulings", 1, true) == nil, path .. " dates the rulings to 2.1.3")
   end
   local readme = read("README.md")
   check(readme:find("version 2.1.3", 1, true) ~= nil, "README.md states the port version")

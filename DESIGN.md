@@ -12,12 +12,13 @@ and the corpus is [conformance/](conformance/) with its negative controls in
 [conformance-controls/](conformance-controls/); STANDARD.md, IMPLEMENTING.md and
 both directories are vendored VERBATIM from
 [mas-bandwidth/serialize](https://github.com/mas-bandwidth/serialize) at tag
-`v2.1.3` (standard 2.1, format 2.0 — the `rejected` refusal reason,
-IMPLEMENTING.md's uniform rules U1–U16 with the 2.1.3 rulings on U3, U6, U9
-and U15, and the `reject` step), by `tools/revendor.sh v2.1.3`, and CI
+`v2.1.4` (standard 2.1, format 2.0 — the `rejected` refusal reason,
+IMPLEMENTING.md's uniform rules U1–U16 with the 2.1.1 rulings on U3, U6, U9
+and U15, the 2.1.4 statements of U7, U11 and U16, and the `reject` step), by
+`tools/revendor.sh v2.1.4`, and CI
 diffs them against the tag on
 every run. Where STANDARD.md is silent,
-[serialize.go](https://github.com/mas-bandwidth/serialize.go) `v2.0.0` (module
+[serialize.go](https://github.com/mas-bandwidth/serialize.go) `v2.1.1` (module
 `github.com/mas-bandwidth/serialize.go/v2`) is the reference for behaviour
 (IMPLEMENTING.md, "Sources"), and the fuzz oracle;
 [serialize.js](https://github.com/mas-bandwidth/serialize.js) (commit
@@ -89,7 +90,7 @@ exists, so a row added here is a row the skeleton must carry.
 | `serialize.Uint128.add(a, b)` | serialize_int128.lua (int) | `Uint128.Add` |
 | `serialize.Uint128.sub(a, b)` | serialize_int128.lua (int) | `Uint128.Sub` |
 | `serialize.Uint128.mul(a, b)` | serialize_int128.lua (int) | `Uint128.Mul` |
-| `serialize.Uint128.divMod(a, b)` | serialize_int128.lua (int) | `Uint128.DivMod`: returns `quotient, remainder` |
+| `serialize.Uint128.divMod(a, b)` | serialize_int128.lua (int) | `Uint128.DivMod`: returns `quotient, remainder`; a zero divisor raises |
 | `serialize.Uint128.div(a, b)` | serialize_int128.lua (int) | `Uint128.Div` |
 | `serialize.Uint128.mod(a, b)` | serialize_int128.lua (int) | `Uint128.Mod` |
 | `serialize.Uint128.neg(v)` | serialize_int128.lua (int) | `Uint128.Neg` |
@@ -107,7 +108,7 @@ exists, so a row added here is a row the skeleton must carry.
 | `serialize.Int128.add(a, b)` | serialize_int128.lua (int) | `Int128.Add` |
 | `serialize.Int128.sub(a, b)` | serialize_int128.lua (int) | `Int128.Sub` |
 | `serialize.Int128.mul(a, b)` | serialize_int128.lua (int) | `Int128.Mul` |
-| `serialize.Int128.divMod(a, b)` | serialize_int128.lua (int) | `Int128.DivMod`: truncating, returns `quotient, remainder` |
+| `serialize.Int128.divMod(a, b)` | serialize_int128.lua (int) | `Int128.DivMod`: truncating, returns `quotient, remainder`; a zero divisor raises |
 | `serialize.Int128.div(a, b)` | serialize_int128.lua (int) | `Int128.Div` |
 | `serialize.Int128.mod(a, b)` | serialize_int128.lua (int) | `Int128.Mod` |
 | `serialize.Int128.neg(v)` | serialize_int128.lua (int) | `Int128.Neg` |
@@ -324,7 +325,8 @@ native 64-bit integer subtype (`math.maxinteger` is `9223372036854775807`,
 - **bool** is a Lua boolean. **float32** and **float64** are Lua numbers
   (doubles); a float32 holds the double that is exactly its float32 value (e).
   A number of either Lua subtype is accepted; an integer is converted to its
-  double value for the bit pattern.
+  double value for the bit pattern, and an integer with no exact double value
+  (above 2^53 in magnitude and not a multiple of its spacing) raises.
 - **A value of the wrong Lua type is API misuse and raises**, never a silent
   coercion: a float where an integer belongs (`1.0` included: `math.type`
   tells them apart exactly), an integer outside its Go type's domain (a
@@ -571,12 +573,15 @@ it. On each:
 - no read past the data's end: the bounds test precedes every load (d).
 
 The order of one serialize call (`serialize_stream.lua`, `M.method`). Write
-and measure: the holder is a table, else raise; the family loads, else raise
+and measure: the holder is a table, else raise (`serializeBytes` of zero count
+also takes no holder, and a holder with no value, IMPLEMENTING.md U7); the
+family loads, else raise
 "not implemented"; the arm's `check` runs (a bad declaration raises) and its
 `checkValue` (a value of the wrong type raises); the arm runs, and traps on a
 value its operation cannot carry (U9). There is no failed write or measure
 state to consult. Read: the family loads, else raise "not implemented";
-a failed stream returns `false`; a holder that is not a table or a bad
+a failed stream returns `false`; a holder that is not a table (the same zero
+count `serializeBytes` aside) or a bad
 declaration refuses `value_out_of_range`; the arm runs; the stream settles
 the result (a read assigns the holder only on success). Because the family
 loads before the latch check, a method whose

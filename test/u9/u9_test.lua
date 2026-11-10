@@ -119,6 +119,8 @@ function TestU9WriteAfterFlushTraps()
   local cases = {
     { "bits after flush", function(s) return s:serializeBits({ value = 0xCD }, 8) end },
     { "bytes after flush", function(s) return s:serializeBytes({ value = "0123456789ABCDEFG" }, 17) end },
+    { "zero bytes after flush", function(s) return s:serializeBytes({ value = "" }, 0) end },
+    { "empty string after flush", function(s) return s:serializeString({ value = "" }, 1) end },
   }
   for _, c in ipairs(cases) do
     local ws = serialize.WriteStream.new(64)

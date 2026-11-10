@@ -276,3 +276,31 @@ function TestSerializeFloatIntegerSubtype()
   check(wireBytes("serializeDouble", d, "double 3 // 1") == wireBytes("serializeDouble", 3.0, "double 3.0"),
     "serializeDouble writes 3 // 1 as 3.0")
 end
+
+-- An integer with no exact double value is write misuse (IMPLEMENTING.md U3:
+-- a writer never sends bytes that differ from the caller's value): the write
+-- and the measure raise, writing and counting nothing. Every integer that
+-- converts exactly, the int64 extremes 2^53 and -2^63 included, is written.
+function TestSerializeFloatInexactIntegerRaises()
+  local want = "serialize: a float holder integer must convert exactly to a double"
+  for _, method in ipairs({ "serializeFloat", "serializeDouble" }) do
+    for _, v in ipairs({ math.maxinteger, (1 << 53) + 1, -(1 << 53) - 1, math.mininteger + 1 }) do
+      local what = method .. "(" .. tostring(v) .. ")"
+      local ws = serialize.WriteStream.new(8)
+      local ok, err = pcall(function() return ws[method](ws, { value = v }) end)
+      check(not ok, what .. ": the write did not raise")
+      check(string.find(tostring(err), want, 1, true) ~= nil, what .. ": the write raised " .. tostring(err))
+      check(ws:error() == nil and ws:bitsProcessed() == 0, what .. ": the raised write latched or wrote")
+      local ms = serialize.MeasureStream.new()
+      ok, err = pcall(function() return ms[method](ms, { value = v }) end)
+      check(not ok, what .. ": the measure did not raise")
+      check(string.find(tostring(err), want, 1, true) ~= nil, what .. ": the measure raised " .. tostring(err))
+      check(ms:error() == nil and ms:bitsProcessed() == 0, what .. ": the raised measure latched or counted")
+    end
+    for _, v in ipairs({ 1 << 53, -(1 << 53), math.mininteger, 1 << 62 }) do
+      writeAccepted(method, v, method .. "(" .. tostring(v) .. ")")
+    end
+  end
+  check(wireBytes("serializeDouble", math.mininteger, "double -2^63")
+    == wireBytes("serializeDouble", -2.0 ^ 63, "double -2.0^63"), "serializeDouble writes -2^63 exactly")
+end
