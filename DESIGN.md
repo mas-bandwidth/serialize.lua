@@ -613,7 +613,7 @@ nothing. Its end costs nothing.
 return {
   methods = {                       -- one entry per dispatched method it owns
     serializeInt = {
-      check = function(min, max) end,           -- optional; raises on API misuse
+      check = function(min, max) end,           -- optional; returns the rule's message, or nil
       write = function(stream, value, min, max) end,   -- -> boolean
       read = function(stream, min, max) end,           -- -> ok, value
       measure = function(stream, value, min, max) end, -- -> boolean

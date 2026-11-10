@@ -1,9 +1,8 @@
 -- test/uniform: the uniform behaviour rules U1 to U16 of IMPLEMENTING.md
--- (vendored from serialize v2.1.3) that this port proves with its own tests,
--- and the 2026-10-27 audit findings for this port. Run by `make test
--- T=uniform` from the repository root. Each test names its rule. Unit tests:
--- no real time, no sockets, no network: io only reads the repository's
--- documents.
+-- (vendored from serialize v2.1.3) that this port proves with its own tests.
+-- Run by `make test T=uniform` from the repository root. Each test names its
+-- rule. Unit tests: no real time, no sockets, no network: io only reads the
+-- repository's documents.
 
 local serialize = require("serialize")
 local S = require("serialize_stream")
