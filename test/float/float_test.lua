@@ -53,6 +53,49 @@ local function writeAccepted(method, value, what)
   check(ms[method](ms, { value = value }) == true, what .. ": the measure must accept")
 end
 
+-- An integer-valued Lua number is accepted wherever a float is: the value,
+-- not its Lua subtype, decides. serializeFloat, serializeDouble and
+-- serializeCompressedFloat agree on the same value.
+function TestFloatIntegerValues()
+  local ints = { 0, 1, 3, -2, 1 << 20 }
+  for _, n in ipairs(ints) do
+    check(math.type(n) == "integer", "witness " .. tostring(n) .. " must be an integer")
+    writeAccepted("serializeFloat", n, "float value " .. tostring(n))
+    writeAccepted("serializeDouble", n, "double value " .. tostring(n))
+
+    local wf = serialize.WriteStream.new(8)
+    check(wf:serializeFloat({ value = n }) == true, "float write of integer value " .. tostring(n))
+    wf:flush()
+    local rf = serialize.ReadStream.new(wf:data())
+    local hf = { value = 0.0 }
+    check(rf:serializeFloat(hf) == true, "float read of integer value " .. tostring(n))
+    check(hf.value == n and math.type(hf.value) == "float",
+      "float round trip of integer value " .. tostring(n) .. " gave " .. tostring(hf.value))
+
+    local wd = serialize.WriteStream.new(8)
+    check(wd:serializeDouble({ value = n }) == true, "double write of integer value " .. tostring(n))
+    wd:flush()
+    local rd = serialize.ReadStream.new(wd:data())
+    local hd = { value = 0.0 }
+    check(rd:serializeDouble(hd) == true, "double read of integer value " .. tostring(n))
+    check(hd.value == n and math.type(hd.value) == "float",
+      "double round trip of integer value " .. tostring(n) .. " gave " .. tostring(hd.value))
+  end
+
+  do
+    local wc = serialize.WriteStream.new(8)
+    check(wc:serializeCompressedFloat({ value = 5 }, 0, 10, 1) == true,
+      "compressed float write of an integer value")
+    wc:flush()
+    local rc = serialize.ReadStream.new(wc:data())
+    local hc = { value = 0.0 }
+    check(rc:serializeCompressedFloat(hc, 0, 10, 1) == true,
+      "compressed float read of an integer value")
+    check(hc.value == 5.0 and math.type(hc.value) == "float",
+      "compressed float round trip of an integer value gave " .. tostring(hc.value))
+  end
+end
+
 function TestSerializeFloat()
   local counts = { ["conformance/float.txt"] = 24, ["conformance/double.txt"] = 27 }
   for path, n in pairs(counts) do
