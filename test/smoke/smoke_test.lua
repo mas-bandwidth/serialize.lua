@@ -248,3 +248,18 @@ function TestSmoke()
   for _, p in ipairs(shadows) do check(io.open(p, "r") == nil, p .. " was not removed") end
   if not ok then error(err, 0) end
 end
+
+-- The number model guard is a pure function of the observed model: the pinned
+-- interpreter's 64-bit integers and binary64 floats pass it, while a narrower
+-- or wider float model and a 32-bit integer are refused by name.
+function TestNumberModelGuard()
+  local S = require("serialize_stream")
+  check(S.numberModelError(math.maxinteger, 2^24 + 1 ~= 2^24, 2^53 + 1 == 2^53) == nil,
+    "the pinned 64-bit integer, binary64 float interpreter passes the guard")
+  local e = S.numberModelError(math.maxinteger, false, true)
+  check(e ~= nil and e:find("binary64", 1, true) ~= nil, "a narrower float model is refused by name")
+  e = S.numberModelError(math.maxinteger, true, false)
+  check(e ~= nil and e:find("binary64", 1, true) ~= nil, "a wider float model is refused by name")
+  e = S.numberModelError(2147483647, false, false)
+  check(e ~= nil and e:find("LUA_32BITS", 1, true) ~= nil, "a 32-bit maxinteger is still refused by name")
+end
