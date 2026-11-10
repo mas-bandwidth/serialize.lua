@@ -431,6 +431,23 @@ func randRange(lo, hi int64) int64 {
 	return int64(uint64(lo) + rng.Uint64N(span+1))
 }
 
+// randScalar returns a Unicode scalar value that is not NUL and not a
+// surrogate, so string(r) is well-formed UTF-8 of one to four bytes.
+func randScalar() rune {
+	switch rng.IntN(5) {
+	case 0:
+		return rune(randRange(1, 0x7f))
+	case 1:
+		return rune(randRange(0x80, 0x7ff))
+	case 2:
+		return rune(randRange(0x800, 0xd7ff))
+	case 3:
+		return rune(randRange(0xe000, 0xffff))
+	default:
+		return rune(randRange(0x10000, 0x10ffff))
+	}
+}
+
 func randU32() uint32 { return rng.Uint32() }
 
 func randU64() uint64 { return rng.Uint64() }
@@ -639,14 +656,19 @@ func randOp() op {
 			bits &^= 0x0010000000000000
 		}
 		o.valF64 = math.Float64frombits(bits)
-	case 16: // compressed float32, exactly representable integers at resolution 1
+	case 16: // compressed float32 over fractional bounds and resolutions
 		o.kind = "cfloat"
-		lo := int32(randRange(-1000, -1))
-		hi := int32(randRange(1, 1000))
-		o.cfMin = math.Float32bits(float32(lo))
-		o.cfMax = math.Float32bits(float32(hi))
-		o.cfRes = math.Float32bits(1)
-		o.valF32 = float32(randRange(int64(lo), int64(hi)))
+		lo := float32(rng.Float64()*2000 - 1000)
+		hi := float32(rng.Float64()*2000 - 1000)
+		if !(lo < hi) {
+			lo, hi = -1, 1
+		}
+		o.cfMin = math.Float32bits(lo)
+		o.cfMax = math.Float32bits(hi)
+		// keep delta/res a finite float32: the span is at most 2000 and the
+		// resolution at least 0.001, so the quantized range stays below 2^32.
+		o.cfRes = math.Float32bits(float32(rng.Float64()*0.999 + 0.001))
+		o.valF32 = lo + (hi-lo)*float32(rng.Float64())
 	case 17: // bytes
 		o.kind = "bytes"
 		n := int(randRange(0, 64))
@@ -654,13 +676,17 @@ func randOp() op {
 		for i := range o.payload {
 			o.payload[i] = byte(randU32())
 		}
-	case 18: // string
+	case 18: // string: any well-formed UTF-8 without a NUL, up to buffer size - 1 bytes
 		o.kind = "str"
 		o.bufSize = int(randRange(1, 256))
 		n := int(randRange(0, int64(o.bufSize)-1))
-		o.payload = make([]byte, n)
-		for i := range o.payload {
-			o.payload[i] = byte(randRange(1, 0x7f))
+		o.payload = make([]byte, 0, n)
+		for len(o.payload) < n {
+			r := string(randScalar())
+			if len(o.payload)+len(r) > n {
+				break
+			}
+			o.payload = append(o.payload, r...)
 		}
 	case 19: // align
 		o.kind = "align"
