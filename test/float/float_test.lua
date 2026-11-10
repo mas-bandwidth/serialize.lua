@@ -52,6 +52,13 @@ local function writeAccepted(method, value, what)
   check(ms[method](ms, { value = value }) == true, what .. ": the measure must accept")
 end
 
+local function wireBytes(method, value, what)
+  local ws = serialize.WriteStream.new(8)
+  check(ws[method](ws, { value = value }) == true, what .. ": the write must accept, got " .. tostring(ws:error()))
+  ws:flush()
+  return ws:data()
+end
+
 function TestSerializeFloat()
   local counts = { ["conformance/float.txt"] = 24, ["conformance/double.txt"] = 27 }
   for path, n in pairs(counts) do
@@ -228,4 +235,44 @@ function TestSerializeFloat()
     if not ok then error(err, 0) end
     check(calls > 0, "the compressed float wire path must use the float family's fround")
   end
+end
+
+-- An integer-subtype Lua number is still a Lua number: serializeFloat and
+-- serializeDouble accept it and write the same bits as its float value.
+function TestSerializeFloatIntegerSubtype()
+  check(math.type(1) == "integer" and math.type(1.0) == "float",
+    "the witness uses both Lua number subtypes")
+  for _, v in ipairs({ 0, 1, -1, 3, 42 }) do
+    check(math.type(v) == "integer", tostring(v) .. " is an integer subtype")
+    check(wireBytes("serializeFloat", v, "float " .. tostring(v))
+      == wireBytes("serializeFloat", v + 0.0, "float " .. tostring(v) .. ".0"),
+      "serializeFloat writes integer " .. tostring(v) .. " as its float value")
+    check(wireBytes("serializeDouble", v, "double " .. tostring(v))
+      == wireBytes("serializeDouble", v + 0.0, "double " .. tostring(v) .. ".0"),
+      "serializeDouble writes integer " .. tostring(v) .. " as its float value")
+    local ms = serialize.MeasureStream.new()
+    check(ms:serializeFloat({ value = v }) == true and ms:bitsProcessed() == 32,
+      "serializeFloat measures integer " .. tostring(v) .. " as 32 bits")
+    local msd = serialize.MeasureStream.new()
+    check(msd:serializeDouble({ value = v }) == true and msd:bitsProcessed() == 64,
+      "serializeDouble measures integer " .. tostring(v) .. " as 64 bits")
+    local function compressed(x)
+      local ws = serialize.WriteStream.new(8)
+      check(ws:serializeCompressedFloat({ value = x }, -50, 50, 1) == true,
+        "serializeCompressedFloat accepts " .. math.type(x) .. " " .. tostring(x) .. ", got " .. tostring(ws:error()))
+      ws:flush()
+      local mc = serialize.MeasureStream.new()
+      check(mc:serializeCompressedFloat({ value = x }, -50, 50, 1) == true,
+        "serializeCompressedFloat measures " .. math.type(x) .. " " .. tostring(x))
+      return ws:data(), mc:bitsProcessed()
+    end
+    local ib, ibits = compressed(v)
+    local fb, fbits = compressed(v + 0.0)
+    check(ib == fb and ibits == fbits,
+      "serializeCompressedFloat writes integer " .. tostring(v) .. " as its float value")
+  end
+  local d = 3 // 1
+  check(math.type(d) == "integer", "3 // 1 is an integer subtype")
+  check(wireBytes("serializeDouble", d, "double 3 // 1") == wireBytes("serializeDouble", 3.0, "double 3.0"),
+    "serializeDouble writes 3 // 1 as 3.0")
 end

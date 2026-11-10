@@ -25,7 +25,7 @@ local NON_FINITE_FLOAT = stream.Refusal.NonFiniteFloat
 
 local M = {}
 
-local error, math, string = error, math, string
+local error, string = error, string
 
 -- STANDARD.md, "Finite values only": the exponent field all ones.
 local FLOAT_EXPONENT = 0x7F800000
@@ -181,11 +181,12 @@ M.float32FromBits = float32FromBits
 M.floatBitsAreFinite = floatBitsAreFinite
 M.doubleBitsAreFinite = doubleBitsAreFinite
 
--- DESIGN.md (c): a float holder value is a Lua float (1.0, never 1); an
--- integer is API misuse and raises.
+-- DESIGN.md (c): a float holder value is any Lua number; an integer is
+-- converted to its double value for the bit pattern. A non-number is API
+-- misuse and raises.
 local function checkFloat(value)
-  if math.type(value) ~= "float" then
-    error("serialize: a float holder value is a Lua float (math.type == \"float\")", 3)
+  if type(value) ~= "number" then
+    error("serialize: a float holder value is a Lua number", 3)
   end
 end
 
