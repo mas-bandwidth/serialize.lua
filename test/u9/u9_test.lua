@@ -75,25 +75,25 @@ end
 -- before any bit of it is written (U10), and latches no past_end.
 function TestU9PastEndTraps()
   local cases = {
-    { "bits past end", 0, function(s) return s:serializeBits({ value = 1 }, 1) end },
-    { "bits64 past end", 8, function(s)
+    { "bits past end", 0, 0, function(s) return s:serializeBits({ value = 1 }, 1) end },
+    { "bits64 past end", 8, 3, function(s)
       return s:serializeBits({ value = 1 }, 3) and s:serializeBits64({ value = -1 }, 64)
     end },
-    { "bytes payload past end", 8, function(s)
+    { "bytes payload past end", 8, 3, function(s)
       return s:serializeBits({ value = 1 }, 3) and s:serializeBytes({ value = "12345678" }, 8)
     end },
-    { "string payload past end", 8, function(s)
+    { "string payload past end", 8, 3, function(s)
       return s:serializeBits({ value = 1 }, 3) and s:serializeString({ value = "abcdefgh" }, 200)
     end },
-    { "uint128 past end", 8, function(s) return s:serializeUint128({ value = { lo = 1, hi = 2 } }) end },
+    { "uint128 past end", 8, 0, function(s) return s:serializeUint128({ value = { lo = 1, hi = 2 } }) end },
   }
   for _, c in ipairs(cases) do
     local ws = serialize.WriteStream.new(c[2])
-    local ok, err = pcall(c[3], ws)
+    local ok, err = pcall(c[4], ws)
     check(not ok, c[1] .. ": did not trap")
     check(string.find(tostring(err), "past_end", 1, true) ~= nil, c[1] .. ": the trap does not name past_end: " .. tostring(err))
     check(ws:error() == nil, c[1] .. ": latched " .. tostring(ws:error()))
-    check(ws:bitsProcessed() == 0 or ws:bitsProcessed() == 3, c[1] .. ": wrote part of the operation")
+    check(ws:bitsProcessed() == c[3], c[1] .. ": wrote " .. ws:bitsProcessed() .. " bits, want " .. c[3])
   end
   -- an exact fit is not misuse
   local ws = serialize.WriteStream.new(8)
